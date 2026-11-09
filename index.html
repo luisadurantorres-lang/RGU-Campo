@@ -1,0 +1,775 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Campo RGU</title>
+<meta name="theme-color" content="#0d6874">
+<meta name="description" content="Verificación AOC en campo para la actualización del RGU, con trabajo sin señal.">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<script src="vendor/xlsx.full.min.js"></script>
+<script src="vendor/jszip.min.js"></script>
+<script src="vendor/lite.umd.js"></script>
+<style>
+/* Layout: herramienta de campo de una columna; carga inicial -> lista de códigos -> ficha a pantalla completa; vista Oficina con resumen, concepto y exportación */
+:root{
+  --bg:#f2f4f1; --surface:#ffffff; --ink:#1b2321; --muted:#566360; --line:#d3dbd6; --chip:#e5ebe7;
+  --accent:#0d6874; --accent-ink:#ffffff; --accent-soft:#d8ecee;
+  --ok:#2d7a3a; --warn:#9a6200; --bad:#b0281f; --ok-soft:#e1f0e3; --warn-soft:#f6ebd6; --bad-soft:#f7e0dd;
+  --f-body:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --f-head:"Roboto Condensed","Arial Narrow",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;
+  --r:10px; color-scheme:light;
+}
+@media (prefers-color-scheme: dark){:root{
+  --bg:#111715; --surface:#1a2220; --ink:#e3eae6; --muted:#9aa8a2; --line:#2d3834; --chip:#232d2a;
+  --accent:#55b6c2; --accent-ink:#06191c; --accent-soft:#16343a;
+  --ok:#6cc27a; --warn:#e2a843; --bad:#f07468; --ok-soft:#183020; --warn-soft:#33270f; --bad-soft:#3a1a17; color-scheme:dark}}
+*{box-sizing:border-box}
+html,body{background:var(--bg);color:var(--ink);margin:0}
+body{font-family:var(--f-body);font-size:16px;line-height:1.4;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-bottom:calc(32px + env(safe-area-inset-bottom,0px))}
+[hidden]{display:none!important}
+h1,h2,h3{font-family:var(--f-head);font-weight:700;letter-spacing:.01em;text-wrap:balance;margin:0}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.mono{font-family:var(--f-mono);font-size:.9em;font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)}
+.wrap{max-width:760px;margin:0 auto}
+header.top{position:sticky;top:0;z-index:5;background:var(--surface);border-bottom:1px solid var(--line);margin-inline:calc(-1*max(16px,env(safe-area-inset-left,0px)));padding:calc(10px + env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) 0 max(16px,env(safe-area-inset-left,0px))}
+.top-row{display:flex;align-items:center;justify-content:space-between;gap:12px;max-width:760px;margin:0 auto}
+.top h1{font-size:1.4rem}
+.top .sub{font-size:.82rem;color:var(--muted)}
+.prog{height:6px;background:var(--chip);border-radius:3px;overflow:hidden;max-width:760px;margin:8px auto 0}
+.prog > i{display:block;height:100%;background:var(--accent);width:0}
+.tabs{display:flex;gap:4px;max-width:760px;margin:8px auto 0}
+.tabs button{flex:1;border:0;background:none;padding:10px 4px;font-family:var(--f-head);font-weight:700;font-size:1.02rem;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);border-bottom:3px solid transparent}
+.tabs button[aria-selected="true"]{color:var(--accent);border-bottom-color:var(--accent)}
+.net{font-size:.75rem;padding:3px 8px;border-radius:999px;background:var(--chip);color:var(--muted);white-space:nowrap}
+.net.on{background:var(--ok-soft);color:var(--ok)} .net.off{background:var(--warn-soft);color:var(--warn)}
+.tools{display:flex;flex-direction:column;gap:10px;margin-top:14px}
+.search{width:100%;padding:12px 14px;border:1px solid var(--line);border-radius:var(--r);background:var(--surface)}
+.chips{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;scrollbar-width:none}
+.chip{flex:none;border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:7px 12px;font-size:.88rem;white-space:nowrap}
+.chip[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.chip b{font-variant-numeric:tabular-nums}
+select.sector{padding:10px 12px;border:1px solid var(--line);border-radius:var(--r);background:var(--surface);width:100%}
+.list{display:flex;flex-direction:column;gap:8px;margin-top:12px}
+.card{display:grid;grid-template-columns:6px 1fr auto;gap:12px;align-items:stretch;text-align:left;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:0;overflow:hidden;width:100%}
+.card .stripe{background:var(--line)}
+.card[data-s="vis"] .stripe{background:var(--ok)}
+.card[data-s="noloc"] .stripe,.card[data-s="rep"] .stripe{background:var(--warn)}
+.card .body{padding:10px 0;min-width:0}
+.card .code{font-family:var(--f-mono);font-weight:600;font-size:1rem}
+.card .line2{font-size:.9rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block}
+.card .side{display:flex;flex-direction:column;align-items:flex-end;justify-content:center;gap:4px;padding:10px 12px 10px 0}
+.pill{font-size:.72rem;font-weight:600;letter-spacing:.04em;text-transform:uppercase;padding:3px 8px;border-radius:999px;background:var(--chip);color:var(--muted);white-space:nowrap}
+.pill.ok{background:var(--ok-soft);color:var(--ok)} .pill.warn{background:var(--warn-soft);color:var(--warn)} .pill.bad{background:var(--bad-soft);color:var(--bad)} .pill.acc{background:var(--accent-soft);color:var(--accent)}
+.empty{padding:24px;text-align:center;color:var(--muted)}
+.sheet{position:fixed;inset:0;z-index:20;background:var(--bg);overflow-y:auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-bottom:calc(40px + env(safe-area-inset-bottom,0px))}
+.sheet-bar{position:sticky;top:0;z-index:2;background:var(--surface);border-bottom:1px solid var(--line);margin-inline:calc(-1*max(16px,env(safe-area-inset-left,0px)));padding:calc(8px + env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) 8px max(16px,env(safe-area-inset-left,0px))}
+.sheet-bar .in{display:flex;align-items:center;gap:10px;max-width:760px;margin:0 auto}
+.back{border:1px solid var(--line);background:var(--surface);border-radius:var(--r);padding:8px 12px;font-weight:600}
+.sheet-bar .t{flex:1;min-width:0}
+.sheet-bar .t .code{font-family:var(--f-mono);font-weight:600}
+.saved{font-size:.78rem;color:var(--muted);white-space:nowrap}
+.nav2{display:flex;gap:6px}
+.nav2 button{border:1px solid var(--line);background:var(--surface);border-radius:var(--r);padding:8px 12px;font-weight:700}
+.ref{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;margin-top:14px}
+.ref h2{font-size:1.05rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.kv{display:grid;grid-template-columns:minmax(110px,40%) 1fr;gap:4px 12px;margin:8px 0 0;font-size:.92rem}
+.kv dt{color:var(--muted)} .kv dd{margin:0;min-width:0;overflow-wrap:anywhere}
+.alert{margin-top:10px;padding:10px 12px;border-radius:8px;background:var(--warn-soft);color:var(--ink);font-size:.9rem;border-left:4px solid var(--warn)}
+fieldset{border:0;margin:18px 0 0;padding:0;min-width:0}
+legend{font-family:var(--f-head);font-weight:700;font-size:1.22rem;padding:0;margin-bottom:8px;display:flex;gap:8px;align-items:baseline}
+legend .col{font-family:var(--f-mono);font-size:.72rem;font-weight:600;color:var(--accent);background:var(--accent-soft);padding:2px 6px;border-radius:4px}
+.box{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;display:flex;flex-direction:column;gap:14px}
+.f{display:flex;flex-direction:column;gap:6px;min-width:0}
+.f > label,.f > .lbl{font-size:.88rem;font-weight:600;color:var(--muted)}
+.f input[type=text],.f input[type=number],.f input[type=date],.f textarea,.f select,.inp{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+.f textarea{min-height:84px;resize:vertical}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media (max-width:420px){.row2{grid-template-columns:1fr}}
+.seg{display:flex;flex-wrap:wrap;gap:6px}
+.seg label{position:relative}
+.seg input{position:absolute;opacity:0;pointer-events:none}
+.seg span{display:inline-block;border:1px solid var(--line);background:var(--bg);border-radius:8px;padding:9px 12px;font-size:.92rem;min-height:42px;line-height:1.5}
+.seg input:checked + span{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:600}
+.seg input:focus-visible + span{outline:3px solid var(--accent);outline-offset:2px}
+.checks{display:flex;flex-direction:column;gap:8px}
+.checks label{display:flex;gap:10px;align-items:center;font-size:.95rem}
+.checks input{width:22px;height:22px;accent-color:var(--accent)}
+.btn{border:1px solid var(--line);background:var(--surface);border-radius:var(--r);padding:11px 14px;font-weight:600;display:inline-block;text-align:center}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btns{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.photos{display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:8px}
+.ph{background:var(--bg);border:1px solid var(--line);border-radius:8px;overflow:hidden;display:flex;flex-direction:column}
+.ph img{width:100%;aspect-ratio:1;object-fit:cover;display:block;background:var(--chip)}
+.ph .meta{padding:6px;font-size:.72rem;display:flex;flex-direction:column;gap:4px}
+.ph select{font-size:.78rem;padding:4px;border:1px solid var(--line);border-radius:6px;background:var(--surface);width:100%}
+.ph button{border:0;background:none;color:var(--bad);font-size:.78rem;padding:2px 0;text-align:left}
+.hint{font-size:.82rem;color:var(--muted);margin:0}
+.hide{display:none!important}
+.sum{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-top:14px}
+.stat{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:10px 12px}
+.stat b{display:block;font-family:var(--f-head);font-size:1.8rem;line-height:1.1;font-variant-numeric:tabular-nums}
+.stat span{font-size:.82rem;color:var(--muted)}
+.section{margin-top:22px;display:flex;flex-direction:column;gap:8px}
+.section h2{font-size:1.3rem}
+.tablewrap{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:var(--r)}
+table{border-collapse:collapse;width:100%;font-size:.88rem}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{font-size:.74rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);background:var(--bg)}
+td .mono{white-space:nowrap}
+tr.sel td{background:var(--accent-soft)}
+.concept{width:100%;min-height:260px;padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--surface);font-size:.95rem;line-height:1.5}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(20px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:999px;font-size:.9rem;z-index:40;max-width:calc(100% - 32px);text-align:center}
+.confirm{margin-top:4px;padding:6px;border:1px solid var(--bad);border-radius:8px;background:var(--bad-soft);display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:.85rem}
+.minibox{background:var(--bg);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.mini{display:block;width:100%;height:auto;max-width:100%}
+.mini .pg{fill:var(--warn-soft);stroke:var(--warn);stroke-width:2;stroke-linejoin:round}
+.mini .pg.no{fill:var(--bad-soft);stroke:var(--bad)}
+.mini .pt-ref{fill:none;stroke:var(--muted);stroke-width:2}
+.mini .pt-campo{fill:var(--accent);stroke:var(--surface);stroke-width:2}
+.mini .pt-foto{fill:var(--ink);opacity:.7}
+.mini .pt-yo{fill:none;stroke:var(--accent);stroke-width:2;stroke-dasharray:3 3}
+.mini .mini-t{fill:var(--muted);font-size:11px;font-family:var(--f-body)}
+.lg{display:inline-block;width:10px;height:10px;border-radius:50%;vertical-align:middle;margin-right:2px}
+.lg.ref{border:2px solid var(--muted)} .lg.campo{background:var(--accent)} .lg.foto{background:var(--ink);opacity:.7}
+.links{display:flex;flex-wrap:wrap;gap:8px}
+.links a{display:inline-block;border:1px solid var(--line);border-radius:8px;padding:8px 12px;font-weight:600;color:var(--accent);text-decoration:none;background:var(--surface)}
+.setup{margin-top:18px;display:flex;flex-direction:column;gap:14px}
+.setup .step{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px;display:flex;flex-direction:column;gap:10px}
+.setup .step h2{font-size:1.15rem}
+.fileok{font-size:.88rem;color:var(--ok)} .fileerr{font-size:.88rem;color:var(--bad)}
+.report{font-size:.9rem;display:flex;flex-direction:column;gap:6px}
+.report ul{margin:0;padding-left:18px}
+.notes{display:flex;flex-direction:column;gap:10px}
+.note{border:1px solid var(--line);border-radius:8px;background:var(--bg);padding:10px;display:flex;flex-direction:column;gap:8px}
+.note audio{width:100%;height:40px}
+.note .nh{display:flex;justify-content:space-between;gap:8px;font-size:.82rem;color:var(--muted);flex-wrap:wrap}
+.note textarea{width:100%;min-height:70px;padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface);font-size:.92rem}
+.rec{display:flex;align-items:center;gap:10px}
+.rec .dot{width:12px;height:12px;border-radius:50%;background:var(--bad)}
+@media (prefers-reduced-motion:no-preference){.rec .dot{animation:pulse 1s infinite alternate}@keyframes pulse{from{opacity:1}to{opacity:.3}}}
+.bar{height:8px;background:var(--chip);border-radius:4px;overflow:hidden}.bar > i{display:block;height:100%;background:var(--accent);width:0}
+@media (prefers-reduced-motion:no-preference){.prog > i{transition:width .3s}}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="top-row">
+    <div>
+      <h1>Campo RGU</h1>
+      <div class="sub"><span id="distName">Verificación AOC</span> · <span id="progTxt" class="mono"></span></div>
+    </div>
+    <span id="net" class="net">—</span>
+  </div>
+  <div class="prog"><i id="progBar"></i></div>
+  <div class="tabs" role="tablist" id="tabs">
+    <button id="tabCampo" role="tab" aria-selected="true">Campo</button>
+    <button id="tabOficina" role="tab" aria-selected="false">Oficina</button>
+  </div>
+</header>
+
+<main class="wrap">
+  <section id="vSetup" hidden>
+    <div class="setup">
+      <p>Carga una sola vez los archivos que entrega el grupo de RGU. Quedan guardados en este equipo; después la app funciona sin señal.</p>
+      <div class="step">
+        <h2>1. Matriz de verificación (Excel ADT-065)</h2>
+        <p class="hint">Archivo con la hoja de códigos y las columnas del F-ADT-065, por ejemplo «ADT-065 REPELÓN - 2026 - 137 códigos.xlsx». Si no tienes la matriz, sirve el listado de RGU con las columnas CODUsuario, Codigo_Nue, area y Observ.</p>
+        <label class="btn" for="inXlsx">Elegir Excel</label><input id="inXlsx" type="file" accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
+        <div id="okXlsx"></div>
+      </div>
+      <div class="step">
+        <h2>2. Polígonos (KMZ o KML de RGU)</h2>
+        <p class="hint">Por ejemplo «RGU_SIN_SERVICIO_REPELON.kmz». Es opcional, pero sin él la app no puede revisar si el punto cae dentro del predio.</p>
+        <label class="btn" for="inKmz">Elegir KMZ o KML</label><input id="inKmz" type="file" accept=".kmz,.kml,application/vnd.google-earth.kmz,application/vnd.google-earth.kml+xml" hidden>
+        <div id="okKmz"></div>
+      </div>
+      <div class="step">
+        <h2>3. Revisar y guardar</h2>
+        <div class="report" id="report"><p class="hint">Aquí aparece el resumen de lo cargado y las diferencias entre la matriz y el KMZ.</p></div>
+        <div class="btns"><button class="btn pri" id="saveBase" disabled>Guardar datos en este equipo</button><button class="btn" id="cancelSetup" hidden>Cancelar</button></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="vCampo" hidden>
+    <div class="tools">
+      <input id="q" class="search" type="search" placeholder="Buscar código, predio, usuario o vereda" autocomplete="off">
+      <div class="chips" id="filters"></div>
+      <select id="sector" class="sector" aria-label="Sector"></select>
+    </div>
+    <div class="list" id="list"></div>
+  </section>
+
+  <section id="vOficina" hidden>
+    <div class="sum" id="sum"></div>
+    <div class="section">
+      <h2>Concepto técnico por código</h2>
+      <p class="hint">El concepto se arma con los datos de campo. Revísalo y ajusta la redacción; los cambios se guardan y salen en la columna AC del Excel.</p>
+      <div class="f"><label for="ofCode">Código</label><select id="ofCode"></select></div>
+      <div class="btns"><button class="btn" id="regen">Volver a generar desde los datos</button><button class="btn" id="copyC">Copiar</button></div>
+      <textarea id="concept" class="concept" aria-label="Concepto técnico"></textarea>
+      <p class="hint" id="conceptNote"></p>
+    </div>
+    <div class="section">
+      <h2>Códigos verificados</h2>
+      <div class="tablewrap"><table><thead><tr><th>Código</th><th>Condición</th><th>Causa</th><th>Área ef. (ha)</th><th>Área excl. (ha)</th><th>Punto vs. polígono</th><th>Propuesta</th><th>Fotos</th></tr></thead><tbody id="tbl"></tbody></table></div>
+    </div>
+    <div class="section">
+      <h2>Exportar y respaldar</h2>
+      <div class="box">
+        <div class="row2">
+          <div class="f"><label for="profN">Profesional técnico (col. BM)</label><input id="profN" type="text"></div>
+          <div class="f"><label for="profP">Profesión (col. BN)</label><input id="profP" type="text"></div>
+        </div>
+        <div class="btns">
+          <button class="btn pri" id="expX">Exportar Excel</button>
+          <button class="btn" id="expZ">Exportar fotos y audios (ZIP)</button>
+          <button class="btn" id="expJ">Respaldo completo (ZIP)</button>
+          <label class="btn" for="impJ">Importar respaldo</label><input id="impJ" type="file" accept=".zip,.json,application/zip,application/json" hidden>
+        </div>
+        <p class="hint">El Excel trae la hoja «Columnas AOC» en el mismo orden de la matriz (A, B, T–AC, BM–BN), más el detalle de campo y la relación de fotos. El respaldo completo lleva datos y fotos: sirve para pasar el trabajo del celular al computador y para no perder nada.</p>
+      </div>
+    </div>
+    <div class="section">
+      <h2>Transcripción de notas de voz</h2>
+      <div class="box">
+        <p class="hint">La transcripción se hace dentro del equipo, sin enviar el audio a ningún servidor. Requiere descargar una vez el modelo de voz, con señal; después funciona sin conexión.</p>
+        <div class="f"><span class="lbl">Modelo</span>
+          <div class="seg" role="radiogroup">
+            <label><input type="radio" name="mdl" value="base"><span>Preciso (≈ 80 MB)</span></label>
+            <label><input type="radio" name="mdl" value="tiny"><span>Rápido (≈ 45 MB)</span></label>
+          </div></div>
+        <p class="hint" id="mdlState"></p>
+        <div class="bar" id="mdlBar" hidden><i></i></div>
+        <div class="btns"><button class="btn pri" id="mdlLoad">Descargar y preparar el modelo</button><button class="btn" id="trAll">Transcribir notas pendientes</button></div>
+      </div>
+    </div>
+    <div class="section">
+      <h2>Datos base</h2>
+      <div class="box">
+        <p class="hint" id="baseInfo"></p>
+        <div class="btns"><button class="btn" id="reload">Cargar otra versión de la matriz o del KMZ</button></div>
+        <p class="hint">Cargar otra versión no borra lo verificado: los registros se conservan por código.</p>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div id="sheet" class="sheet" hidden></div>
+<div id="toast" class="toast" hidden></div>
+
+<script>
+"use strict";
+/* ---------- estado ---------- */
+let BASE=[], GEO={}, META={}, byCode={};
+const REC={}, PH={}, AU={};
+const SECTORES=["CANAL SUPERIOR DE RIEGO - ESTACION NO. 01","CANAL SUPERIOR DE RIEGO - ESTACION NO. 02","CANAL SUPERIOR DE RIEGO - ESTACION NO. 03","CANAL SUPERIOR DE RIEGO - ESTACION NO. 04","CANAL SUPERIOR DE RIEGO - ESTACION NO. 05","CANAL SUPERIOR DE RIEGO - ESTACION NO. 06","CANAL SUPERIOR DE RIEGO - ESTACION NO. 07","CANAL SUPERIOR DE RIEGO - ESTACION NO. 08","CANAL SUPERIOR DE RIEGO - ESTACION NO. 09","CANAL SUPERIOR DE RIEGO - ESTACION NO. 10","ÁREA DE RIEGO INFERIOR SUR","CANAL INFERIOR","OTRAS AREAS"];
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const num=v=>{const n=parseFloat(String(v??"").replace(",","."));return isFinite(n)?n:null};
+const fmtHa=v=>v==null?"—":Number(v).toLocaleString("es-CO",{minimumFractionDigits:4,maximumFractionDigits:4});
+const today=()=>new Date(Date.now()-new Date().getTimezoneOffset()*6e4).toISOString().slice(0,10);
+const stamp=()=>today().replace(/-/g,"");
+const normCode=c=>String(c??"").trim().toUpperCase().replace(/_/g,"-").replace(/\s+/g,"");
+const normH=s=>String(s??"").normalize("NFD").replace(/[̀-ͯ]/g,"").toUpperCase().replace(/\s+/g," ").trim();
+function toast(m,ms){const t=$("#toast");t.textContent=m;t.hidden=false;clearTimeout(toast._t);toast._t=setTimeout(()=>t.hidden=true,ms||2800)}
+
+/* ---------- almacenamiento local ---------- */
+let idb=null;
+function openIDB(){return new Promise(res=>{try{const r=indexedDB.open("campo-rgu",2);r.onupgradeneeded=()=>{const d=r.result;const has=n=>d.objectStoreNames.contains(n);if(!has("kv"))d.createObjectStore("kv");if(!has("rec"))d.createObjectStore("rec",{keyPath:"code"});if(!has("foto"))d.createObjectStore("foto",{keyPath:"id"});if(!has("audio"))d.createObjectStore("audio",{keyPath:"id"})};r.onsuccess=()=>res(r.result);r.onerror=()=>res(null)}catch(e){res(null)}})}
+function idbAll(store){return new Promise(res=>{if(!idb)return res([]);try{const q=idb.transaction(store).objectStore(store).getAll();q.onsuccess=()=>res(q.result||[]);q.onerror=()=>res([])}catch(e){res([])}})}
+function idbGet(store,k){return new Promise(res=>{if(!idb)return res(null);try{const q=idb.transaction(store).objectStore(store).get(k);q.onsuccess=()=>res(q.result??null);q.onerror=()=>res(null)}catch(e){res(null)}})}
+function idbPut(store,v,k){return new Promise(res=>{if(!idb)return res(false);try{const tx=idb.transaction(store,"readwrite");k===undefined?tx.objectStore(store).put(v):tx.objectStore(store).put(v,k);tx.oncomplete=()=>res(true);tx.onerror=()=>res(false)}catch(e){res(false)}})}
+function idbDel(store,k){return new Promise(res=>{if(!idb)return res(false);try{const tx=idb.transaction(store,"readwrite");tx.objectStore(store).delete(k);tx.oncomplete=()=>res(true);tx.onerror=()=>res(false)}catch(e){res(false)}})}
+function lsGet(k,d){try{const v=localStorage.getItem(k);return v==null?d:v}catch(e){return d}}
+function lsSet(k,v){try{localStorage.setItem(k,v)}catch(e){}}
+
+/* ---------- lectura de la matriz ADT-065 ---------- */
+function dms(s){if(s==null||s==="")return null;if(typeof s==="number")return s;const m=String(s).match(/(\d+)\D+(\d+)\D+([\d.,]+)\D*([NSWEnswe])/);
+ if(!m){const n=num(s);return n}let v=+m[1]+(+m[2])/60+parseFloat(m[3].replace(",","."))/3600;return /[SWsw]/.test(m[4])?-v:v}
+function parseMatrix(ab){const wb=XLSX.read(ab,{type:"array"});let ws=wb.Sheets.BASE;let rows=null,hi=-1;
+ const names=ws?["BASE"].concat(wb.SheetNames.filter(n=>n!=="BASE")):wb.SheetNames;
+ for(const n of names){const r=XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,raw:true,defval:null});const i=r.findIndex(row=>row&&row.some(c=>normH(c)==="CODIGO RGU ANTERIOR"));if(i>=0){rows=r;hi=i;break}}
+ if(!rows){for(const n of wb.SheetNames){const r=XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,raw:true,defval:null});const i=r.findIndex(row=>row&&row.some(c=>normH(c)==="CODUSUARIO"));if(i>=0)return parseList(r,i)}}
+ if(!rows)throw new Error("No encontré la columna «CÓDIGO RGU ANTERIOR» ni «CODUsuario». Revisa que sea la matriz ADT-065 o el listado de RGU.");
+ let distrito="";for(let i=0;i<hi;i++){const row=rows[i]||[];const j=row.findIndex(c=>/^DISTRITO DE ADECUACION DE TIERRAS/.test(normH(c)));if(j>=0){const v=row.slice(j+1).find(c=>c!=null&&String(c).trim());if(v)distrito=String(v).trim()}}
+ parseMatrix.distrito=distrito;
+ const H=rows[hi].map(normH);const col=(...keys)=>{for(const k of keys){const i=H.findIndex(h=>h===k);if(i>=0)return i}for(const k of keys){const i=H.findIndex(h=>h.startsWith(k));if(i>=0)return i}return -1};
+ const C={a:col("CODIGO RGU ANTERIOR"),b:col("CODIGO RGU NUEVO"),z:col("ZONA O SECTOR (SI APLICA)","ZONA O SECTOR"),v:col("VEREDA"),p:col("NOMBRE DEL PREDIO"),npn:col("NUMERO PREDIAL NACIONAL"),lon:col("LONGITUD"),lat:col("LATITUD"),at:col("AREA TOTAL DE TERRENO SEGUN VISITA DE CAMPO (HA)"),ab:col("AREA BENEFICIADA (HA)"),s:col("CONCEPTO CATASTRAL DEL PREDIO"),u:col("NOMBRE DEL USUARIO"),c:col("CONDICION JURIDICA DEL USUARIO RESPECTO AL PREDIO","CONDICION JURIDICA"),by:col("NO. DE ENTREGA"),ag:col("DESENGLOBE")};
+ if(C.a<0)throw new Error("Falta la columna del código RGU.");
+ const g=(r,i)=>i<0||r[i]==null?"":String(r[i]).replace(/ /g," ").trim();
+ const out=[];const seen=new Set();
+ for(let i=hi+1;i<rows.length;i++){const r=rows[i];if(!r)continue;const a=g(r,C.a);if(!a)continue;const code=normCode(a);if(seen.has(code))continue;seen.add(code);
+  const S=g(r,C.s);const sec=S.match(/denominado:\s*([^,]+),/);const cul=S.match(/se cultiva\s*([^.\n]+)/);let b=g(r,C.b);if(/^\d+$/.test(b))b=b.padStart(10,"0");
+  out.push({a:code,b,z:g(r,C.z),v:g(r,C.v),p:g(r,C.p),npn:g(r,C.npn),lat:dms(C.lat<0?null:r[C.lat]),lon:dms(C.lon<0?null:r[C.lon]),at:num(C.at<0?null:r[C.at]),ab:num(C.ab<0?null:r[C.ab]),u:g(r,C.u),c:g(r,C.c),sr:sec?sec[1].trim():"",cr:cul?cul[1].replace(/\s+/g," ").trim():"",cg:g(r,C.by)?1:0,cgTxt:g(r,C.by),dg:/x/i.test(g(r,C.ag))?1:0})}
+ if(!out.length)throw new Error("La hoja no trae códigos debajo de los encabezados.");
+ return out}
+/* listado simple de RGU (CODUsuario, Codigo_Nue, area, Observ) cuando no hay matriz ADT-065 */
+function parseList(rows,hi){parseMatrix.distrito="";const H=rows[hi].map(normH);const ix=k=>H.indexOf(k);const ca=ix("CODUSUARIO"),cb=ix("CODIGO_NUE"),car=ix("AREA");
+ const out=[];const seen=new Set();for(let i=hi+1;i<rows.length;i++){const r=rows[i];if(!r||r[ca]==null)continue;const code=normCode(r[ca]);if(!code||seen.has(code))continue;seen.add(code);
+  let b=r[cb]==null?"":String(r[cb]).trim();if(/^\d+$/.test(b))b=b.padStart(10,"0");
+  out.push({a:code,b,z:"",v:"",p:"",npn:"",lat:null,lon:null,at:num(r[car]),ab:num(r[car]),u:"",c:"",sr:"",cr:"",cg:0,cgTxt:"",dg:0})}
+ if(!out.length)throw new Error("El listado no trae códigos.");return out}
+/* ---------- lectura del KMZ/KML ---------- */
+async function parseKmz(file){let text;
+ if(/\.kml$/i.test(file.name))text=await file.text();else{const z=await JSZip.loadAsync(file);const f=Object.values(z.files).find(f=>/\.kml$/i.test(f.name));if(!f)throw new Error("El KMZ no trae un archivo KML por dentro.");text=await f.async("string")}
+ const doc=new DOMParser().parseFromString(text,"application/xml");if(doc.getElementsByTagName("parsererror").length)throw new Error("El archivo KML no se pudo leer.");
+ const out=[];for(const pm of doc.getElementsByTagName("Placemark")){const nm=pm.getElementsByTagName("name")[0];const name=nm?nm.textContent.trim():"";
+  const attrs={};const d=pm.getElementsByTagName("description")[0];if(d){const re=/<td>([^<]+)<\/td>\s*<td>([^<]*)<\/td>/g;let m;while((m=re.exec(d.textContent)))attrs[m[1].trim()]=m[2].trim()}
+  for(const dt of pm.getElementsByTagName("Data")){const v=dt.getElementsByTagName("value")[0];if(v)attrs[dt.getAttribute("name")]=v.textContent.trim()}
+  const code=normCode(attrs.CODUsuario||name);
+  for(const pg of pm.getElementsByTagName("Polygon")){const ob=pg.getElementsByTagName("outerBoundaryIs")[0];const co=ob&&ob.getElementsByTagName("coordinates")[0];if(!co)continue;
+   const ring=co.textContent.trim().split(/\s+/).map(t=>t.split(",").map(Number)).filter(p=>isFinite(p[0])&&isFinite(p[1])).map(p=>[+p[0].toFixed(6),+p[1].toFixed(6)]);
+   if(ring.length>=3)out.push({code,ring,obs:String(attrs.Observ||"").replace(/^\*+/,"").trim(),area:num(attrs.area),cn:attrs.Codigo_Nue||""})}}
+ if(!out.length)throw new Error("El archivo no trae polígonos.");return out}
+
+/* ---------- carga inicial ---------- */
+let pend={base:null,polys:null,xlsxName:"",kmzName:"",distrito:""};
+function setupReport(){const el=$("#report");if(!pend.base&&!pend.polys){el.innerHTML='<p class="hint">Aquí aparece el resumen de lo cargado y las diferencias entre la matriz y el KMZ.</p>';return}
+ const base=pend.base||BASE;const codes=new Set(base.map(b=>b.a));const L=[];
+ if(pend.base)L.push(`Matriz: <b>${pend.base.length}</b> códigos.`);
+ if(pend.polys){const pc={};pend.polys.forEach(p=>pc[p.code]=(pc[p.code]||0)+1);const pk=Object.keys(pc);
+  L.push(`KMZ: <b>${pend.polys.length}</b> polígonos de <b>${pk.length}</b> códigos.`);
+  const dup=pk.filter(k=>pc[k]>1);const extra=pk.filter(k=>!codes.has(k));const sinp=base.filter(b=>!pc[b.a]);
+  const items=[];if(dup.length)items.push(`Códigos con más de un polígono: ${dup.map(esc).join(", ")}`);
+  if(extra.length)items.push(`Polígonos sin código en la matriz (no se usan): ${extra.map(esc).join(", ")}`);
+  if(sinp.length)items.push(`Códigos de la matriz sin polígono (${sinp.length}): ${sinp.map(b=>esc(b.a)).join(", ")}`);
+  if(items.length)L.push("<ul>"+items.map(i=>`<li>${i}</li>`).join("")+"</ul>")}
+ el.innerHTML=L.map(x=>x.startsWith("<ul>")?x:`<p style="margin:0">${x}</p>`).join("");
+ $("#saveBase").disabled=!(pend.base||BASE.length)}
+$("#inXlsx").addEventListener("change",async e=>{const f=e.target.files[0];e.target.value="";if(!f)return;const ok=$("#okXlsx");
+ try{if(!window.XLSX)throw new Error("No cargó la librería de Excel.");pend.base=parseMatrix(await f.arrayBuffer());pend.distrito=parseMatrix.distrito||"";pend.xlsxName=f.name;ok.className="fileok";ok.textContent=`${f.name}: ${pend.base.length} códigos leídos${pend.distrito?` · distrito ${pend.distrito}`:""}.`}catch(err){pend.base=null;ok.className="fileerr";ok.textContent=err.message||"No se pudo leer el archivo."}setupReport()});
+$("#inKmz").addEventListener("change",async e=>{const f=e.target.files[0];e.target.value="";if(!f)return;const ok=$("#okKmz");
+ try{pend.polys=await parseKmz(f);pend.kmzName=f.name;ok.className="fileok";ok.textContent=`${f.name}: ${pend.polys.length} polígonos leídos.`}catch(err){pend.polys=null;ok.className="fileerr";ok.textContent=err.message||"No se pudo leer el archivo."}setupReport()});
+$("#saveBase").addEventListener("click",async()=>{const base=pend.base||BASE;const geo=pend.polys?{}:GEO;
+ if(pend.polys){const codes=new Set(base.map(b=>b.a));pend.polys.forEach(p=>{if(codes.has(p.code))(geo[p.code]=geo[p.code]||[]).push({ring:p.ring,obs:p.obs,area:p.area,cn:p.cn})})}
+ const meta={xlsx:pend.base?pend.xlsxName:META.xlsx,kmz:pend.polys?pend.kmzName:META.kmz,distrito:pend.base?pend.distrito:META.distrito,fecha:new Date().toISOString(),n:base.length,np:Object.values(geo).reduce((s,a)=>s+a.length,0)};
+ const ok=(await idbPut("kv",base,"base"))&&(await idbPut("kv",geo,"geo"))&&(await idbPut("kv",meta,"meta"));
+ setBase(base,geo,meta);pend={base:null,polys:null,xlsxName:"",kmzName:""};$("#okXlsx").textContent="";$("#okKmz").textContent="";setupReport();
+ toast(ok?"Datos guardados en este equipo":"Se cargaron los datos, pero el equipo no permitió guardarlos; no cierres la app",4000);showView(lsGet("rgu.tab","campo"))});
+$("#cancelSetup").addEventListener("click",()=>{pend={base:null,polys:null,xlsxName:"",kmzName:""};setupReport();showView("campo")});
+$("#reload").addEventListener("click",()=>{$("#cancelSetup").hidden=false;showView("setup")});
+function setBase(base,geo,meta){BASE=base;GEO=geo||{};META=meta||{};byCode=Object.fromEntries(BASE.map(b=>[b.a,b]));
+ $("#distName").textContent=META.distrito?`Distrito ${META.distrito}`:"Verificación AOC";
+ $("#baseInfo").textContent=BASE.length?`${META.n||BASE.length} códigos${META.xlsx?` de «${META.xlsx}»`:""}; ${META.np||0} polígonos${META.kmz?` de «${META.kmz}»`:""}. Cargados el ${META.fecha?new Date(META.fecha).toLocaleString("es-CO"):"—"}.`:"";
+ renderSectors();renderAll()}
+
+/* ---------- geometría ---------- */
+const polysOf=c=>GEO[c]||[];
+const obsOf=c=>{const p=polysOf(c);return p.length?p[0].obs:""};
+function center(c){const p=polysOf(c);if(p.length){let sx=0,sy=0;const r=p[0].ring;r.forEach(([x,y])=>{sx+=x;sy+=y});return [sy/r.length,sx/r.length]}const b=byCode[c];return b&&b.lat?[b.lat,b.lon]:null}
+function pip(lat,lon,ring){let ins=false;for(let i=0,j=ring.length-1;i<ring.length;j=i++){const [xi,yi]=ring[i],[xj,yj]=ring[j];if(((yi>lat)!==(yj>lat))&&(lon<(xj-xi)*(lat-yi)/(yj-yi)+xi))ins=!ins}return ins}
+function distEdgeM(lat,lon,ring){const k=Math.cos(lat*Math.PI/180)*111320,kl=110540;let best=Infinity;for(let i=0;i<ring.length-1;i++){const ax=(ring[i][0]-lon)*k,ay=(ring[i][1]-lat)*kl,bx=(ring[i+1][0]-lon)*k,by=(ring[i+1][1]-lat)*kl;const dx=bx-ax,dy=by-ay,L=dx*dx+dy*dy;let t=L?-(ax*dx+ay*dy)/L:0;t=Math.max(0,Math.min(1,t));best=Math.min(best,Math.hypot(ax+t*dx,ay+t*dy))}return best}
+function relation(c,lat,lon){const p=polysOf(c);if(!p.length||lat==null||lon==null)return null;if(p.some(q=>pip(lat,lon,q.ring)))return {inside:true,d:0};return {inside:false,d:Math.min(...p.map(q=>distEdgeM(lat,lon,q.ring)))}}
+const relTxt=rel=>!rel?"":rel.inside?"dentro del polígono del predio":`fuera del polígono del predio, a ${Math.round(rel.d)} m de su borde`;
+const relShort=rel=>!rel?"":rel.inside?"Dentro":`Fuera (${Math.round(rel.d)} m)`;
+function earthUrl(c){const k=center(c);return k?`https://earth.google.com/web/search/${k[0].toFixed(6)},${k[1].toFixed(6)}`:""}
+function mapsUrl(c){const k=center(c);return k?`https://www.google.com/maps/search/?api=1&query=${k[0].toFixed(6)},${k[1].toFixed(6)}`:""}
+let yo=null; // última ubicación del GPS {lat,lon,acc,t}
+function miniMap(c){const p=polysOf(c);const b=byCode[c];const r=REC[c];const pts=[];
+ if(b.lat)pts.push({lat:b.lat,lon:b.lon,t:"ref"});
+ photosOf(c).forEach(f=>{if(f.lat!=null)pts.push({lat:f.lat,lon:f.lon,t:"foto"})});
+ const flat=r?num(r.lat):null,flon=r?num(r.lon):null;if(flat!=null&&flon!=null)pts.push({lat:flat,lon:flon,t:"campo"});
+ if(yo&&Date.now()-yo.t<120000)pts.push({lat:yo.lat,lon:yo.lon,t:"yo"});
+ const all=p.flatMap(q=>q.ring.map(([x,y])=>({lat:y,lon:x}))).concat(pts);if(!all.length)return "";
+ const lat0=all.reduce((s,a)=>s+a.lat,0)/all.length,k=Math.cos(lat0*Math.PI/180)*111320,kl=110540;
+ const xs=all.map(a=>a.lon*k),ys=all.map(a=>a.lat*kl);let x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys);
+ const minSpan=60;if(x1-x0<minSpan){const m=(x0+x1)/2;x0=m-minSpan/2;x1=m+minSpan/2}if(y1-y0<minSpan){const m=(y0+y1)/2;y0=m-minSpan/2;y1=m+minSpan/2}
+ const W=320,H=220,pad=18,s=Math.min((W-2*pad)/(x1-x0),(H-2*pad)/(y1-y0));const ox=(W-(x1-x0)*s)/2,oy=(H-(y1-y0)*s)/2;
+ const X=lon=>ox+(lon*k-x0)*s,Y=lat=>H-(oy+(lat*kl-y0)*s);
+ const polyS=p.map(q=>`<polygon points="${q.ring.map(([x,y])=>X(x).toFixed(1)+","+Y(y).toFixed(1)).join(" ")}" class="${/NO/.test(q.obs)?"pg no":"pg"}"/>`).join("");
+ const ptS=pts.map(a=>{const cx=X(a.lon).toFixed(1),cy=Y(a.lat).toFixed(1);return a.t==="ref"?`<circle cx="${cx}" cy="${cy}" r="5" class="pt-ref"/>`:a.t==="foto"?`<circle cx="${cx}" cy="${cy}" r="3.5" class="pt-foto"/>`:a.t==="yo"?`<circle cx="${cx}" cy="${cy}" r="9" class="pt-yo"/>`:`<circle cx="${cx}" cy="${cy}" r="6" class="pt-campo"/>`}).join("");
+ return `<svg viewBox="0 0 ${W} ${H}" class="mini" role="img" aria-label="Esquema del polígono del predio ${esc(c)}">${polyS}${ptS}<text x="${W-8}" y="${H-6}" text-anchor="end" class="mini-t">≈ ${Math.round(x1-x0)} m de ancho · N ↑</text></svg>`}
+function mapBlock(c){const r=REC[c];const flat=r?num(r.lat):null,flon=r?num(r.lon):null;const rel=relation(c,flat,flon);const svg=miniMap(c);
+ const st=!polysOf(c).length?'<span class="pill">Sin polígono RGU</span>':flat==null?'<span class="pill">Sin coordenada de campo</span>':rel.inside?'<span class="pill ok">Punto dentro del polígono</span>':`<span class="pill bad">Punto fuera: ${Math.round(rel.d)} m</span>`;
+ let yoS="";if(yo&&Date.now()-yo.t<120000&&polysOf(c).length){const ry=relation(c,yo.lat,yo.lon);yoS=ry.inside?'<span class="pill ok">Usted está dentro</span>':`<span class="pill warn">Usted está a ${Math.round(ry.d)} m</span>`}
+ return (svg?`<div class="minibox">${svg}</div>`:"")+`<div class="btns">${st}${yoS}</div><p class="hint">Polígono del grupo RGU · <span class="lg ref"></span> punto de la matriz · <span class="lg campo"></span> coordenada de campo · <span class="lg foto"></span> fotos · círculo punteado: su ubicación actual</p>`}
+
+/* ---------- GPS ---------- */
+function getGPS(timeout){return new Promise((res,rej)=>{if(!navigator.geolocation)return rej(new Error("Este equipo no tiene GPS disponible"));
+ navigator.geolocation.getCurrentPosition(p=>{yo={lat:p.coords.latitude,lon:p.coords.longitude,acc:p.coords.accuracy,t:Date.now()};res(yo)},e=>rej(new Error(e.code===1?"Debes permitir la ubicación para esta app":"No se obtuvo señal GPS; intenta al aire libre")),{enableHighAccuracy:true,timeout:timeout||20000,maximumAge:10000})})}
+
+/* ---------- registros ---------- */
+function blank(code){return {code,estado:"pend",fecha:"",acomp:"",lat:"",lon:"",acc:"",corresp:"",ocupCoincide:"",ocupObs:"",ocupCond:"",
+ T:"",V:"",W:"",X:"",Y:"",Z:"",AA:"",AB:"",cond:"",causa:"",causaOtra:"",estrTipo:"",estrEstado:"",estrQuien:"",medicion:"",medComp:"",medCompN:"",
+ areaEf:"",areaEx:"",areaExCausa:"",factRecibe:"",factNombre:"",factDir:"",nov:{des:false,eng:false,usu:false,con:false},novTxt:"",obs:"",concepto:"",conceptoEd:false,ts:0}}
+const rec=code=>REC[code]||(REC[code]=blank(code));
+const photosOf=code=>Object.values(PH).filter(p=>p.code===code).sort((a,b)=>(a.taken||0)-(b.taken||0));
+const saveT={};
+function touch(code){const r=rec(code);r.ts=Date.now();if(r.estado==="pend"&&(r.cond||r.V))r.estado="vis";clearTimeout(saveT[code]);saveT[code]=setTimeout(async()=>{const ok=await idbPut("rec",r);const s=$("#savedState");if(s)s.textContent=ok?"Guardado en el equipo":"No se pudo guardar: exporta un respaldo";},300)}
+
+/* ---------- concepto ---------- */
+const CAUSAS={sininf:"no existe infraestructura del distrito que llegue al predio",danada:"la infraestructura existe pero se encuentra dañada o fuera de servicio",nouso:"el usuario no hace uso del servicio disponible",fuera:"el predio se encuentra por fuera del polígono del distrito",urb:"el área se encuentra urbanizada o con uso no agropecuario",otra:""};
+const COND={con:"Con servicio",sin:"Sin servicio",disp:"Servicio disponible sin uso"};
+function servicios(r){const s=[];if(r.V==="SI")s.push("Riego");if(r.W==="SI")s.push("Drenaje");if(r.X==="SI")s.push("Protección contra inundaciones");return s.length?s.join(", "):(r.V||r.W||r.X?"Ninguno":"")}
+function propuesta(r){const b=byCode[r.code]||{};const out=[];
+ if(r.estado==="noloc")return["Reprogramar: predio no localizado"];
+ if(r.cond==="sin"&&["sininf","fuera","urb"].includes(r.causa))out.push("Evaluar exclusión del predio (previa revisión de cartera)");
+ if(r.cond==="sin"&&r.causa==="danada")out.push("Mantener en el RGU; reparar infraestructura");
+ if(r.cond==="disp")out.push("Mantener en el RGU (servicio disponible); confirmar tratamiento tarifario");
+ const ef=num(r.areaEf);if(ef!=null&&b.ab!=null&&Math.abs(ef-b.ab)>0.0001)out.push("Cambio de área beneficiada");
+ if(r.ocupCoincide==="NO"||r.nov.usu)out.push("Cambio de nombre del usuario");
+ if(r.nov.des)out.push("Desenglobe");if(r.nov.eng)out.push("Englobe");
+ return out.length?out:(r.cond?["Sin cambios técnicos"]:[])}
+function genConcept(r){const b=byCode[r.code]||{};const p=[];const ph=photosOf(r.code);
+ const fecha=r.fecha?new Date(r.fecha+"T12:00").toLocaleDateString("es-CO",{day:"numeric",month:"long",year:"numeric"}):"[fecha]";
+ p.push(`En visita de verificación técnica realizada el ${fecha} al predio ${b.p||"[nombre del predio]"} (código RGU ${r.code}, código nuevo ${b.b||"—"})${r.acomp?`, con acompañamiento de ${r.acomp}`:""}, el equipo de AOC de la Dirección de Adecuación de Tierras verificó lo siguiente:`);
+ if(r.estado==="noloc"){p.push(`El predio no pudo ser localizado en campo.${r.obs?" "+r.obs:""} Se requiere reprogramar la verificación con apoyo del operador del distrito.`);return p.join("\n\n")}
+ const loc=[];if(r.lat&&r.lon){const rel=relation(r.code,num(r.lat),num(r.lon));loc.push(`El punto de verificación se ubicó en las coordenadas ${num(r.lat).toFixed(6)}, ${num(r.lon).toFixed(6)} (WGS84, grados decimales${num(r.acc)!=null?`, precisión del GPS ±${Math.round(num(r.acc))} m`:""})${rel?`, ${relTxt(rel)} según la cartografía del grupo RGU`:""}.`)}
+ if(r.corresp==="SI")loc.push("El predio visitado corresponde al código RGU verificado.");else if(r.corresp==="PARCIAL")loc.push("El predio visitado corresponde parcialmente al código RGU verificado.");else if(r.corresp==="NO")loc.push("El predio visitado no corresponde al código RGU verificado.");
+ if(loc.length)p.push("Localización. "+loc.join(" "));
+ const sv=[];
+ if(r.cond==="con")sv.push(`El predio recibe el servicio público de adecuación de tierras${r.Y?` desde ${r.Y}`:""}.`);
+ if(r.cond==="sin"){const c=r.causa==="otra"?(r.causaOtra||"[causa]"):(CAUSAS[r.causa]||"[causa]");sv.push(`El predio no recibe el servicio público de adecuación de tierras, debido a que ${c}.`)}
+ if(r.cond==="disp")sv.push(`El predio cuenta con infraestructura del distrito para recibir el servicio${r.Y?` desde ${r.Y}`:""}, pero no hace uso de él.`);
+ const sl=servicios(r);if(sl)sv.push(`Servicios verificados: ${sl}.`);
+ if(r.Z)sv.push(`Canal de drenaje o protección: ${r.Z}.`);
+ if(sv.length)p.push("Prestación del servicio. "+sv.join(" "));
+ const inf=[];
+ if(r.estrTipo&&r.estrTipo!=="Ninguna")inf.push(`La entrega al predio se realiza mediante ${r.estrTipo.toLowerCase()}${r.estrEstado?`, en estado ${r.estrEstado.toLowerCase()}`:""}${r.estrQuien?`, construida por ${r.estrQuien.toLowerCase()}`:""}.`);
+ if(r.estrTipo==="Ninguna")inf.push("No se identificó estructura de entrega al predio.");
+ if(r.medicion)inf.push(r.medicion==="Ninguna"?"No se identificó dispositivo de medición.":`La medición se realiza mediante ${r.medicion.toLowerCase()}${r.medComp==="SI"?`, compartido con ${r.medCompN||"otros"} predios`:""}.`);
+ if(inf.length)p.push("Infraestructura y medición. "+inf.join(" "));
+ const uso=[];if(r.AA)uso.push(`explotación principal ${r.AA.toLowerCase()}`);if(r.AB)uso.push(`cultivo ${r.AB.toLowerCase()}`);if(r.T)uso.push(`tipo de predio ${r.T.toLowerCase()}`);
+ if(uso.length)p.push("Uso actual. Se verificó "+uso.join("; ")+".");
+ const ar=[];const ef=num(r.areaEf),ex=num(r.areaEx);
+ if(ef!=null)ar.push(`área efectivamente beneficiada de ${fmtHa(ef)} ha (área registrada en la matriz: ${fmtHa(b.ab)} ha)`);
+ if(ex!=null&&ex>0)ar.push(`área a excluir de ${fmtHa(ex)} ha${r.areaExCausa?`, correspondiente a ${r.areaExCausa}`:""}`);
+ if(ar.length)p.push("Áreas. Se determinó un "+ar.join(" y un ")+".");
+ const nv=[];if(r.ocupCoincide==="NO")nv.push(`el usuario que explota el predio no coincide con el registrado${r.ocupObs?` (en campo: ${r.ocupObs}${r.ocupCond?`, ${r.ocupCond.toLowerCase()}`:""})`:""}`);
+ if(r.nov.des)nv.push("se evidenció desenglobe de hecho");if(r.nov.eng)nv.push("se evidenció englobe de hecho");if(r.nov.con)nv.push("existen construcciones dentro del predio");
+ if(r.factRecibe==="NO")nv.push("el usuario manifestó no recibir la factura");else if(r.factRecibe==="SI"&&r.factNombre)nv.push(`el usuario recibe la factura a nombre de ${r.factNombre}`);
+ if(r.novTxt)nv.push(r.novTxt);
+ if(nv.length)p.push("Novedades. "+nv.map((x,i)=>i?x:x[0].toUpperCase()+x.slice(1)).join("; ")+".");
+ if(r.obs)p.push("Observaciones. "+r.obs);
+ if(ph.length)p.push(`Registro fotográfico: ${ph.length} fotografía(s) georreferenciada(s).`);
+ const pr=propuesta(r);if(pr.length)p.push("Propuesta para el grupo RGU: "+pr.join("; ")+".");
+ return p.join("\n\n")}
+const conceptOf=r=>r.conceptoEd&&r.concepto?r.concepto:genConcept(r);
+
+/* ---------- lista ---------- */
+let filtro="todos",sectorSel="";
+const FILTROS=[["todos","Todos"],["pend","Pendientes"],["vis","Verificados"],["noloc","No localizados"],["noriega","RGU: no riega"],["parcial","RGU: riega parcial"],["sinpol","Sin polígono"],["sinref","Sin ubicación"],["cg","Contraloría"]];
+const hasLoc=b=>!!(b.lat||polysOf(b.a).length);
+const stateOf=code=>(REC[code]&&REC[code].estado)||"pend";
+function match(b){const s=stateOf(b.a);
+ if(filtro==="pend"&&s!=="pend")return false;if(filtro==="vis"&&s!=="vis")return false;if(filtro==="noloc"&&!(s==="noloc"||s==="rep"))return false;
+ if(filtro==="sinref"&&hasLoc(b))return false;if(filtro==="cg"&&!b.cg)return false;
+ if(filtro==="noriega"&&!/NO RIEGA/i.test(obsOf(b.a)))return false;if(filtro==="parcial"&&!/SI RIEGA/i.test(obsOf(b.a)))return false;if(filtro==="sinpol"&&polysOf(b.a).length)return false;
+ if(sectorSel&&(b.sr||"(sin sector)")!==sectorSel)return false;
+ const q=$("#q").value.trim().toLowerCase();if(q&&![b.a,b.b,b.p,b.u,b.v,b.npn].join(" ").toLowerCase().includes(q))return false;return true}
+const pillOf=s=>s==="vis"?'<span class="pill ok">Verificado</span>':s==="noloc"?'<span class="pill warn">No localizado</span>':s==="rep"?'<span class="pill warn">Reprogramar</span>':'<span class="pill">Pendiente</span>';
+function renderFilters(){const c={todos:BASE.length,pend:0,vis:0,noloc:0,noriega:0,parcial:0,sinpol:0,sinref:0,cg:0};
+ BASE.forEach(b=>{const s=stateOf(b.a);if(s==="pend")c.pend++;if(s==="vis")c.vis++;if(s==="noloc"||s==="rep")c.noloc++;if(!hasLoc(b))c.sinref++;if(b.cg)c.cg++;const o=obsOf(b.a);if(/NO RIEGA/i.test(o))c.noriega++;else if(/SI RIEGA/i.test(o))c.parcial++;if(!polysOf(b.a).length)c.sinpol++});
+ $("#filters").innerHTML=FILTROS.filter(([k])=>k==="todos"||c[k]>0||k==="pend"||k==="vis").map(([k,t])=>`<button class="chip" data-f="${k}" aria-pressed="${filtro===k}">${t} <b>${c[k]}</b></button>`).join("");
+ $("#progTxt").textContent=BASE.length?`${c.vis}/${BASE.length} verificados`:"sin datos cargados";$("#progBar").style.width=BASE.length?(c.vis/BASE.length*100)+"%":"0"}
+function renderList(){renderFilters();const items=BASE.filter(match);
+ $("#list").innerHTML=items.length?items.map(b=>{const s=stateOf(b.a);const n=photosOf(b.a).length;const o=obsOf(b.a);
+  return `<button class="card" data-code="${esc(b.a)}" data-s="${s}"><span class="stripe"></span><span class="body"><span class="code">${esc(b.a)}</span> <span class="muted mono" style="font-size:.8rem">${esc(b.b)}</span><span class="line2">${esc(b.p||"Sin datos en la matriz")}${b.u?" · "+esc(b.u.replace(/\n/g,"; ")):""}</span><span class="line2">${esc(b.sr||(hasLoc(b)?"Sector sin registrar":"Sin ubicación: ubicar con el operador"))}</span></span><span class="side">${pillOf(s)}${/NO RIEGA/i.test(o)?'<span class="pill bad">No riega</span>':/SI RIEGA/i.test(o)?'<span class="pill warn">Riega parcial</span>':""}${b.cg?'<span class="pill acc">Contraloría</span>':""}${n?`<span class="pill acc">${n} foto${n>1?"s":""}</span>`:""}</span></button>`}).join(""):`<div class="empty">${BASE.length?"Ningún código coincide con la búsqueda.":"Aún no hay datos cargados."}</div>`}
+function renderSectors(){const cnt={};BASE.forEach(b=>{const k=b.sr||"(sin sector)";cnt[k]=(cnt[k]||0)+1});
+ $("#sector").innerHTML='<option value="">Todos los sectores</option>'+Object.keys(cnt).sort().map(k=>`<option value="${esc(k)}">${esc(k)} (${cnt[k]})</option>`).join("");$("#sector").value=sectorSel}
+
+/* ---------- ficha ---------- */
+let cur=null;
+function seg(name,opts,val){return `<div class="seg" role="radiogroup">${opts.map(o=>{const [v,t]=Array.isArray(o)?o:[o,o];return `<label><input type="radio" name="${name}" value="${esc(v)}" ${val===v?"checked":""}><span>${esc(t)}</span></label>`}).join("")}</div>`}
+function fld(id,label,val,type,extra){return `<div class="f"><label for="${id}">${label}</label><input id="${id}" data-k="${id.slice(2)}" type="${type||"text"}" value="${esc(val)}" ${extra||""}></div>`}
+function openSheet(code){cur=code;const b=byCode[code];const r=rec(code);if(!r.fecha)r.fecha=today();
+ const idx=BASE.findIndex(x=>x.a===code);const pg=polysOf(code);const eU=earthUrl(code),mU=mapsUrl(code);
+ const sh=$("#sheet");sh.innerHTML=`
+ <div class="sheet-bar"><div class="in"><button class="back" id="closeS">← Lista</button><div class="t"><div class="code">${esc(code)}</div><div class="saved" id="savedState">${r.ts?"Guardado en el equipo":"Sin cambios"}</div></div><div class="nav2"><button id="prevS" aria-label="Código anterior" ${idx<=0?"disabled":""}>‹</button><button id="nextS" aria-label="Código siguiente" ${idx>=BASE.length-1?"disabled":""}>›</button></div></div></div>
+ <div class="wrap">
+ <div class="ref"><h2>Registro en la matriz</h2>
+  <dl class="kv">
+   <dt>Código nuevo</dt><dd class="mono">${esc(b.b||"—")}</dd>
+   <dt>Predio</dt><dd>${esc(b.p||"—")}</dd>
+   <dt>Vereda · zona</dt><dd>${esc(b.v||"—")} · ${esc(b.z||"—")}</dd>
+   <dt>NPN</dt><dd class="mono">${esc(b.npn||"—")}</dd>
+   <dt>Usuario registrado</dt><dd>${esc((b.u||"—").replace(/\n/g,"; "))}${b.c?` (${esc(b.c)})`:""}</dd>
+   <dt>Sector (visita anterior)</dt><dd>${esc(b.sr||"—")}</dd>
+   <dt>Cultivo (visita anterior)</dt><dd>${esc(b.cr||"—")}</dd>
+   <dt>Área terreno · beneficiada</dt><dd class="mono">${fmtHa(b.at)} · ${fmtHa(b.ab)} ha</dd>
+   <dt>Coordenadas matriz</dt><dd class="mono">${b.lat?`${b.lat.toFixed(6)}, ${b.lon.toFixed(6)}`:"Sin georreferencia"}</dd>
+   <dt>Observación RGU</dt><dd>${pg.length?esc(pg.map(q=>q.obs||"—").join(" / ")):"Sin polígono"}</dd>
+   <dt>Área polígono RGU</dt><dd class="mono">${pg.length?pg.map(q=>fmtHa(q.area)).join(" + ")+" ha":"—"}</dd>
+  </dl>
+  ${pg.length>1?'<div class="alert">El KMZ trae más de un polígono con este código. Verificar en campo cuál corresponde.</div>':""}
+  ${!b.lat&&!pg.length?'<div class="alert">Código sin ubicación en la matriz ni en el KMZ. Ubícalo con apoyo del operador y toma el GPS en campo.</div>':""}
+  ${!b.lat&&pg.length?'<div class="alert">La matriz no trae datos de este código; la ubicación sale del polígono del KMZ.</div>':""}
+  ${b.cg?`<div class="alert">Ficha marcada en la matriz: «${esc(b.cgTxt||"remitida")}». Si la verificación cambia algún dato, avisar al grupo RGU antes de notificar.</div>`:""}
+  ${eU?`<div class="links" style="margin-top:10px"><a href="${eU}" target="_blank" rel="noopener">Ver en Google Earth</a><a href="${mU}" target="_blank" rel="noopener">Ver en Google Maps</a></div>`:""}
+  <div id="miniMap" style="margin-top:10px;display:flex;flex-direction:column;gap:8px">${mapBlock(code)}</div>
+  <div class="btns" style="margin-top:8px"><button class="btn" id="whereAmI">¿Dónde estoy respecto al predio?</button></div>
+ </div>
+
+ <fieldset><legend>Visita</legend><div class="box">
+  <div class="f"><span class="lbl">Estado</span>${seg("estado",[["pend","Pendiente"],["vis","Verificado"],["noloc","No localizado"],["rep","Reprogramar"]],r.estado)}</div>
+  <div class="row2">${fld("f_fecha","Fecha",r.fecha,"date")}${fld("f_acomp","Acompañantes (operador, Gobernación)",r.acomp)}</div>
+ </div></fieldset>
+
+ <fieldset><legend>Localización y fotos</legend><div class="box">
+  <div class="btns"><button class="btn pri" id="gpsNow">Tomar GPS aquí</button><span class="hint" id="gpsInfo">${num(r.acc)!=null?`Precisión ±${Math.round(num(r.acc))} m`:""}</span></div>
+  <div class="row2">${fld("f_lat","Latitud (decimal)",r.lat,"text",'inputmode="decimal" placeholder="10.5258"')}${fld("f_lon","Longitud (decimal)",r.lon,"text",'inputmode="decimal" placeholder="-75.1107"')}</div>
+  <div class="btns"><button class="btn" id="gpsFromPhoto">Usar coordenada de una foto</button></div>
+  <div class="f"><span class="lbl">¿El predio visitado corresponde al código?</span>${seg("corresp",[["SI","Sí"],["PARCIAL","Parcialmente"],["NO","No"]],r.corresp)}</div>
+  <div class="f"><span class="lbl">Fotografías</span>
+   <div class="btns"><label class="btn pri" for="camIn">Tomar foto</label><label class="btn" for="galIn">Elegir de la galería</label></div>
+   <input id="camIn" type="file" accept="image/*" capture="environment" hidden><input id="galIn" type="file" accept="image/*" multiple hidden>
+   <p class="hint">Cada foto toma la coordenada de la propia foto o, si no la trae, la del GPS en ese momento.</p>
+   <div class="photos" id="phList"></div></div>
+ </div></fieldset>
+
+ <fieldset><legend>Notas de voz</legend><div class="box">
+  <div class="notes" id="notes"></div>
+  <p class="hint">Graba lo que observas. La transcripción se hace en el equipo y funciona sin señal cuando el modelo ya está descargado (pestaña Oficina).</p>
+ </div></fieldset>
+
+ <fieldset><legend>Servicio <span class="col">T–X</span></legend><div class="box">
+  <div class="f"><span class="lbl">Condición del servicio</span>${seg("cond",[["con","Con servicio"],["sin","Sin servicio"],["disp","Disponible sin uso"]],r.cond)}</div>
+  <div class="f ${r.cond==="sin"?"":"hide"}" id="causaBox"><span class="lbl">Causa del «Sin servicio»</span>${seg("causa",[["sininf","Sin infraestructura"],["danada","Infraestructura dañada"],["nouso","No uso del usuario"],["fuera","Fuera del polígono"],["urb","Área urbanizada"],["otra","Otra"]],r.causa)}
+   <input type="text" id="f_causaOtra" data-k="causaOtra" class="inp ${r.causa==="otra"?"":"hide"}" placeholder="Describe la causa" value="${esc(r.causaOtra)}"></div>
+  <div class="f"><span class="lbl">Tipo de predio (T)</span>${seg("T",["Rural","Urbano","Expansión urbana","Suburbano"],r.T)}</div>
+  <div class="row2">
+   <div class="f"><span class="lbl">Riego (V)</span>${seg("V",[["SI","Sí"],["NO","No"]],r.V)}</div>
+   <div class="f"><span class="lbl">Drenaje (W)</span>${seg("W",[["SI","Sí"],["NO","No"]],r.W)}</div>
+  </div>
+  <div class="f"><span class="lbl">Protección contra inundaciones (X)</span>${seg("X",[["SI","Sí"],["NO","No"]],r.X)}</div>
+  <p class="hint">Tipo de servicio prestado (U): <b id="uTxt">${esc(servicios(r)||"—")}</b></p>
+ </div></fieldset>
+
+ <fieldset><legend>Canales <span class="col">Y–Z</span></legend><div class="box">
+  <div class="f"><label for="f_Y">Canal que presta el servicio de riego (Y)</label><input id="f_Y" data-k="Y" type="text" list="dlSec" value="${esc(r.Y)}"></div>
+  <datalist id="dlSec">${SECTORES.map(s=>`<option value="${esc(s)}">`).join("")}</datalist>
+  ${fld("f_Z","Canal de drenaje o protección (Z)",r.Z)}
+ </div></fieldset>
+
+ <fieldset><legend>Uso <span class="col">AA–AB</span></legend><div class="box">
+  <div class="f"><span class="lbl">Explotación principal (AA)</span>${seg("AA",["Agrícola","Pecuaria","Agropecuaria","Piscícola","Forestal","Residencial","Institucional","Recreativa","Sin explotación"],r.AA)}</div>
+  <div class="f"><label for="f_AB">Cultivo (AB)</label><input id="f_AB" data-k="AB" type="text" list="dlCul" value="${esc(r.AB)}"></div>
+  <datalist id="dlCul">${["Pastos","Plátano","Yuca","Limón","Palma de aceite","Guayaba","Maíz","Ganadería bovina","Mojarra","Sin cultivo"].map(s=>`<option value="${s}">`).join("")}</datalist>
+ </div></fieldset>
+
+ <fieldset><legend>Infraestructura y medición</legend><div class="box">
+  <div class="f"><span class="lbl">Estructura de entrega</span>${seg("estrTipo",["Compuerta","Toma o tubería","Hidrante","Válvula","Ninguna"],r.estrTipo)}</div>
+  <div class="f"><span class="lbl">Estado</span>${seg("estrEstado",["Bueno","Regular","Malo","No funciona"],r.estrEstado)}</div>
+  <div class="f"><span class="lbl">Construida por</span>${seg("estrQuien",["El distrito","Proyecto productivo","El particular","No determinado"],r.estrQuien)}</div>
+  <div class="f"><span class="lbl">Medición</span>${seg("medicion",["Medidor","Estructura de aforo","Ninguna"],r.medicion)}</div>
+  <div class="row2"><div class="f"><span class="lbl">¿Medidor compartido?</span>${seg("medComp",[["SI","Sí"],["NO","No"]],r.medComp)}</div>${fld("f_medCompN","N.° de predios",r.medCompN,"number",'inputmode="numeric" min="2"')}</div>
+ </div></fieldset>
+
+ <fieldset><legend>Áreas</legend><div class="box">
+  <div class="row2">${fld("f_areaEf","Área efectivamente beneficiada (ha)",r.areaEf,"text",'inputmode="decimal"')}${fld("f_areaEx","Área a excluir (ha)",r.areaEx,"text",'inputmode="decimal"')}</div>
+  ${fld("f_areaExCausa","Causa del área a excluir",r.areaExCausa,"text",'placeholder="bosque, ronda, construcciones, sin infraestructura…"')}
+  <p class="hint">Área registrada en la matriz: ${fmtHa(b.ab)} ha${pg.length?` · polígono RGU: ${pg.map(q=>fmtHa(q.area)).join(" + ")} ha`:""}.</p>
+ </div></fieldset>
+
+ <fieldset><legend>Usuario y factura</legend><div class="box">
+  <div class="f"><span class="lbl">¿Quien explota el predio coincide con el usuario registrado?</span>${seg("ocupCoincide",[["SI","Sí"],["NO","No"],["NA","No se encontró a nadie"]],r.ocupCoincide)}</div>
+  ${fld("f_ocupObs","Nombre de quien explota el predio",r.ocupObs)}
+  <div class="f"><span class="lbl">Condición</span>${seg("ocupCond",["Propietario","Poseedor","Ocupante","Tenedor","Arrendatario"],r.ocupCond)}</div>
+  <div class="f"><span class="lbl">¿Recibe la factura?</span>${seg("factRecibe",[["SI","Sí"],["NO","No"]],r.factRecibe)}</div>
+  <div class="row2">${fld("f_factNombre","A nombre de",r.factNombre)}${fld("f_factDir","Dirección de entrega",r.factDir)}</div>
+  <p class="hint">Si registras datos personales, informa al ocupante que se usan para la actualización del RGU (Ley 1581 de 2012).</p>
+ </div></fieldset>
+
+ <fieldset><legend>Novedades</legend><div class="box">
+  <div class="checks">
+   <label><input type="checkbox" data-nov="des" ${r.nov.des?"checked":""}> Desenglobe de hecho</label>
+   <label><input type="checkbox" data-nov="eng" ${r.nov.eng?"checked":""}> Englobe de hecho</label>
+   <label><input type="checkbox" data-nov="usu" ${r.nov.usu?"checked":""}> Cambio de usuario</label>
+   <label><input type="checkbox" data-nov="con" ${r.nov.con?"checked":""}> Construcciones dentro del predio</label>
+  </div>
+  <div class="f"><label for="f_novTxt">Otra novedad</label><input id="f_novTxt" data-k="novTxt" type="text" value="${esc(r.novTxt)}"></div>
+  <div class="f"><label for="f_obs">Observaciones</label><textarea id="f_obs" data-k="obs">${esc(r.obs)}</textarea></div>
+ </div></fieldset>
+ <div class="btns" style="margin-top:18px"><button class="btn pri" id="doneS">Guardar y siguiente pendiente</button></div>
+ </div>`;
+ sh.hidden=false;sh.scrollTop=0;document.body.style.overflow="hidden";renderPhotos();renderNotes()}
+function closeSheet(){stopRec();$("#sheet").hidden=true;document.body.style.overflow="";cur=null;renderAll()}
+function refreshMap(){const el=$("#miniMap");if(el&&cur)el.innerHTML=mapBlock(cur)}
+function renderPhotos(){if(!cur)return;const el=$("#phList");if(!el)return;const ps=photosOf(cur);
+ el.innerHTML=ps.length?ps.map(p=>`<div class="ph" data-id="${p.id}"><img alt="Foto ${esc(p.label||"")} de ${esc(cur)}" src="${esc(p.url||"")}"><div class="meta"><span class="mono">${p.lat!=null?`${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}`:"Sin GPS"}</span><select data-ph="${p.id}" aria-label="Tipo de foto">${["Panorámica","Estructura de entrega","Cultivo o uso","Lindero","Canal","Medidor","Otra"].map(o=>`<option ${p.label===o?"selected":""}>${o}</option>`).join("")}</select><button data-del="${p.id}">Eliminar</button></div></div>`).join(""):'<p class="hint">Aún no hay fotos de este código.</p>'}
+function shrink(file){return new Promise((res,rej)=>{const img=new Image();const u=URL.createObjectURL(file);img.onload=()=>{const m=1600,s=Math.min(1,m/Math.max(img.width,img.height));const c=document.createElement("canvas");c.width=Math.round(img.width*s);c.height=Math.round(img.height*s);c.getContext("2d").drawImage(img,0,0,c.width,c.height);URL.revokeObjectURL(u);c.toBlob(b=>b?res(b):rej(),"image/jpeg",.82)};img.onerror=()=>{URL.revokeObjectURL(u);rej()};img.src=u})}
+async function addPhotos(files){const code=cur;toast("Procesando foto…");
+ for(const f of files){let lat=null,lon=null,src="";try{if(window.exifr){const g=await exifr.gps(f);if(g&&isFinite(g.latitude)){lat=g.latitude;lon=g.longitude;src="foto"}}}catch(e){}
+  if(lat==null){if(yo&&Date.now()-yo.t<120000){lat=yo.lat;lon=yo.lon;src="gps"}else{try{const g=await getGPS(10000);lat=g.lat;lon=g.lon;src="gps"}catch(e){}}}
+  let blob=f;try{blob=await shrink(f)}catch(e){}
+  const id=code+"_"+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+  const p={id,code,blob,lat,lon,src,taken:Date.now(),label:photosOf(code).length?"Estructura de entrega":"Panorámica"};p.url=URL.createObjectURL(blob);PH[id]=p;
+  const {url,...save}=p;await idbPut("foto",save);
+  const r=rec(code);if(lat!=null&&!r.lat){r.lat=lat.toFixed(6);r.lon=lon.toFixed(6);const a=$("#f_lat"),o=$("#f_lon");if(a&&cur===code){a.value=r.lat;o.value=r.lon}}
+  touch(code)}
+ renderPhotos();refreshMap();toast(files.length>1?`${files.length} fotos agregadas`:"Foto agregada")}
+
+/* ---------- notas de voz ---------- */
+const audiosOf=code=>Object.values(AU).filter(a=>a.code===code).sort((a,b)=>a.created-b.created);
+let recState=null;
+function pickMime(){for(const m of ["audio/webm;codecs=opus","audio/webm","audio/mp4","audio/aac","audio/ogg;codecs=opus"]){try{if(window.MediaRecorder&&MediaRecorder.isTypeSupported(m))return m}catch(e){}}return ""}
+const extOf=m=>/mp4|aac|m4a/.test(m||"")?"m4a":/ogg/.test(m||"")?"ogg":"webm";
+const fmtDur=s=>{s=Math.round(s||0);return `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`};
+async function startRec(){if(recState)return;if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia||!window.MediaRecorder)return toast("Este equipo no permite grabar audio desde la app",4000);
+ let stream;try{stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true}})}catch(e){return toast(e&&e.name==="NotAllowedError"?"Debes permitir el micrófono para esta app":"No se pudo usar el micrófono",4000)}
+ const mime=pickMime();let mr;try{mr=new MediaRecorder(stream,mime?{mimeType:mime}:undefined)}catch(e){stream.getTracks().forEach(t=>t.stop());return toast("No se pudo iniciar la grabación",4000)}
+ const st={mr,chunks:[],stream,t0:Date.now(),code:cur,mime:mr.mimeType||mime};recState=st;
+ mr.ondataavailable=e=>{if(e.data&&e.data.size)st.chunks.push(e.data)};
+ mr.onstop=async()=>{recState=null;st.stream.getTracks().forEach(t=>t.stop());clearInterval(st.timer);const blob=new Blob(st.chunks,{type:st.mime||"audio/webm"});const dur=(Date.now()-st.t0)/1000;
+  if(blob.size<500){renderNotes();return toast("La grabación quedó vacía")}
+  const id=st.code+"_a"+Date.now().toString(36);const a={id,code:st.code,blob,mime:blob.type,dur,created:Date.now(),text:"",status:"pend"};
+  await idbPut("audio",a);a.url=URL.createObjectURL(blob);AU[id]=a;touch(st.code);renderNotes();toast("Nota de voz guardada");
+  if(modelReady())queueTr(id)};
+ mr.start(1000);st.timer=setInterval(()=>{const el=$("#recTime");if(el)el.textContent=fmtDur((Date.now()-st.t0)/1000)},500);renderNotes()}
+function stopRec(){if(recState&&recState.mr.state!=="inactive")recState.mr.stop()}
+const AST={pend:"Sin transcribir",queue:"En cola",run:"Transcribiendo…",ok:"Transcrita",err:"No se pudo transcribir"};
+function renderNotes(){const el=$("#notes");if(!el||!cur)return;const list=audiosOf(cur);
+ const recUI=recState&&recState.code===cur?`<div class="rec"><span class="dot"></span><b id="recTime" class="mono">${fmtDur((Date.now()-recState.t0)/1000)}</b><button class="btn pri" id="recStop">Detener y guardar</button></div>`:`<div class="btns"><button class="btn pri" id="recStart">Grabar nota de voz</button></div>`;
+ el.innerHTML=recUI+(list.length?list.map(a=>`<div class="note" data-au="${a.id}"><div class="nh"><span>${new Date(a.created).toLocaleTimeString("es-CO",{hour:"2-digit",minute:"2-digit"})} · ${fmtDur(a.dur)}</span><span>${AST[a.status]||""}</span></div><audio controls preload="none" src="${esc(a.url||"")}"></audio><textarea data-autext="${a.id}" aria-label="Transcripción" placeholder="Transcripción (puedes escribirla o corregirla)">${esc(a.text)}</textarea><div class="btns"><button class="btn" data-tr="${a.id}" ${a.status==="run"||a.status==="queue"?"disabled":""}>Transcribir</button><button class="btn" data-toobs="${a.id}" ${a.text?"":"disabled"}>Agregar a observaciones</button><button class="btn" data-audel="${a.id}">Eliminar</button></div></div>`).join(""):'<p class="hint">Sin notas de voz para este código.</p>')}
+
+/* ---------- transcripción dentro del equipo ---------- */
+let worker=null,trQueue=[],trBusy=false,loading=false;const prog={files:{}};
+const MODEL_SIZE=()=>lsGet("rgu.mdl","base");
+const modelReady=()=>lsGet("rgu.mdlOk","")===MODEL_SIZE();
+function mdlUI(msg){const el=$("#mdlState");if(el)el.textContent=msg||(modelReady()?"Modelo listo en este equipo: la transcripción funciona sin señal.":"El modelo aún no está descargado en este equipo. Descárgalo con señal antes de salir a campo.");
+ document.querySelectorAll('input[name=mdl]').forEach(i=>i.checked=i.value===MODEL_SIZE())}
+function showMdlProgress(){const v=Object.values(prog.files);const l=v.reduce((s,x)=>s+x.l,0),t=v.reduce((s,x)=>s+x.t,0);const bar=$("#mdlBar");bar.hidden=false;bar.firstElementChild.style.width=(t?Math.min(100,l/t*100):0)+"%";mdlUI(`Descargando el modelo: ${(l/1048576).toFixed(0)} de ${(t/1048576).toFixed(0)} MB`)}
+function getWorker(){if(worker)return worker;try{worker=new Worker("transcribe-worker.js",{type:"module"})}catch(e){toast("Este navegador no permite transcribir en el equipo",4000);return null}
+ worker.onmessage=e=>{const m=e.data;
+  if(m.type==="progress"){const p=m.p;if(p&&p.status==="progress"&&p.total){prog.files[p.file]={l:p.loaded,t:p.total};showMdlProgress()}}
+  else if(m.type==="ready"){loading=false;lsSet("rgu.mdlOk",m.size);$("#mdlBar").hidden=true;mdlUI();toast("Modelo listo. Ya puedes transcribir sin señal.",4000)}
+  else if(m.type==="done"){const a=AU[m.id];if(a){a.text=m.text;a.status=m.text?"ok":"err";const {url,...s}=a;idbPut("audio",s);touch(a.code)}lsSet("rgu.mdlOk",MODEL_SIZE());trBusy=false;renderNotes();nextTr()}
+  else if(m.type==="error"){if(m.id){const a=AU[m.id];if(a)a.status="err";trBusy=false;renderNotes();toast(!navigator.onLine&&!modelReady()?"Sin señal y el modelo no está descargado. Descárgalo en la pestaña Oficina.":"No se pudo transcribir: "+m.msg.slice(0,90),5000);nextTr()}
+   else{loading=false;$("#mdlBar").hidden=true;mdlUI(/fetch|network|Failed/i.test(m.msg)?"No se pudo descargar el modelo. Revisa la conexión a internet e intenta de nuevo.":"No se pudo preparar el modelo: "+m.msg.slice(0,140))}}};
+ worker.onerror=()=>{toast("Falló el módulo de transcripción",4000);worker=null;trBusy=false;loading=false};
+ return worker}
+async function toPCM16k(blob){const ab=await blob.arrayBuffer();const AC=window.AudioContext||window.webkitAudioContext;let ctx;try{ctx=new AC({sampleRate:16000})}catch(e){ctx=new AC()}
+ const buf=await new Promise((res,rej)=>{const p=ctx.decodeAudioData(ab,res,rej);if(p&&p.then)p.then(res,rej)});try{ctx.close()}catch(e){}
+ let out=buf;if(buf.sampleRate!==16000||buf.numberOfChannels>1){const oc=new OfflineAudioContext(1,Math.ceil(buf.duration*16000),16000);const s=oc.createBufferSource();s.buffer=buf;s.connect(oc.destination);s.start();out=await oc.startRendering()}
+ return new Float32Array(out.getChannelData(0))}
+function queueTr(id){const a=AU[id];if(!a||a.status==="queue"||a.status==="run")return;a.status="queue";renderNotes();trQueue.push(id);nextTr()}
+async function nextTr(){if(trBusy)return;const id=trQueue.shift();if(!id)return;const a=AU[id];if(!a)return nextTr();
+ if(!modelReady()&&!navigator.onLine){a.status="pend";renderNotes();trQueue=[];return toast("Sin señal y el modelo no está descargado. Descárgalo en la pestaña Oficina.",5000)}
+ const w=getWorker();if(!w){a.status="err";renderNotes();return}
+ trBusy=true;a.status="run";renderNotes();let pcm;try{pcm=await toPCM16k(a.blob)}catch(e){a.status="err";trBusy=false;renderNotes();toast("No se pudo leer el audio",4000);return nextTr()}
+ w.postMessage({type:"run",id,size:MODEL_SIZE(),audio:pcm},[pcm.buffer])}
+document.addEventListener("change",e=>{if(e.target.name==="mdl"){lsSet("rgu.mdl",e.target.value);mdlUI()}});
+$("#mdlLoad").addEventListener("click",()=>{if(loading)return;if(!navigator.onLine&&!modelReady())return toast("Necesitas señal para descargar el modelo",4000);const w=getWorker();if(!w)return;loading=true;prog.files={};mdlUI("Preparando el modelo…");w.postMessage({type:"load",size:MODEL_SIZE()})});
+$("#trAll").addEventListener("click",()=>{const p=Object.values(AU).filter(a=>!a.text&&a.status!=="run"&&a.status!=="queue");if(!p.length)return toast("No hay notas pendientes de transcribir");p.forEach(a=>queueTr(a.id));toast(`${p.length} nota(s) en cola de transcripción`)});
+
+$("#sheet").addEventListener("change",async e=>{const t=e.target;if(!cur)return;const r=rec(cur);
+ if(t.id==="camIn"||t.id==="galIn"){if(t.files.length)await addPhotos([...t.files]);t.value="";return}
+ if(t.dataset.ph){const p=PH[t.dataset.ph];p.label=t.value;const {url,...s}=p;idbPut("foto",s);touch(cur);return}
+ if(t.dataset.nov){r.nov[t.dataset.nov]=t.checked;touch(cur);return}
+ if(t.type==="radio"){r[t.name]=t.value;
+  if(t.name==="cond")$("#causaBox").classList.toggle("hide",t.value!=="sin");
+  if(t.name==="causa")$("#f_causaOtra").classList.toggle("hide",t.value!=="otra");
+  if(["V","W","X"].includes(t.name))$("#uTxt").textContent=servicios(r)||"—";
+  touch(cur);return}});
+const auT={};
+$("#sheet").addEventListener("input",e=>{const t=e.target;if(t.dataset.autext){const a=AU[t.dataset.autext];if(!a)return;a.text=t.value;if(a.status!=="run")a.status=t.value?"ok":"pend";const b=t.closest(".note").querySelector("[data-toobs]");if(b)b.disabled=!t.value;clearTimeout(auT[a.id]);auT[a.id]=setTimeout(()=>{const {url,...s}=a;idbPut("audio",s);touch(a.code)},400);return}
+ if(!cur||!t.dataset.k)return;rec(cur)[t.dataset.k]=t.value;touch(cur);if(t.dataset.k==="lat"||t.dataset.k==="lon")refreshMap()});
+$("#sheet").addEventListener("click",async e=>{const t=e.target.closest("button");if(!t)return;const r=cur&&rec(cur);
+ if(t.id==="closeS")return closeSheet();
+ if(t.id==="recStart")return startRec();
+ if(t.id==="recStop")return stopRec();
+ if(t.dataset.tr){const a=AU[t.dataset.tr];if(a&&!modelReady()&&!navigator.onLine)return toast("Sin señal y el modelo no está descargado. Descárgalo en la pestaña Oficina.",5000);return queueTr(t.dataset.tr)}
+ if(t.dataset.toobs){const a=AU[t.dataset.toobs];if(!a||!a.text)return;r.obs=(r.obs?r.obs.trim()+"\n":"")+a.text;const o=$("#f_obs");if(o)o.value=r.obs;touch(cur);return toast("Agregado a observaciones")}
+ if(t.dataset.audel){const box=t.closest(".note");if(!box.querySelector(".confirm")){const c=document.createElement("div");c.className="confirm";c.innerHTML=`<span>¿Eliminar esta nota de voz?</span><button class="btn" data-audel2="${t.dataset.audel}">Sí, eliminar</button>`;box.append(c)}return}
+ if(t.dataset.audel2){const id=t.dataset.audel2;const a=AU[id];if(a&&a.url)URL.revokeObjectURL(a.url);delete AU[id];trQueue=trQueue.filter(x=>x!==id);await idbDel("audio",id);touch(cur);renderNotes();return}
+ if(t.id==="prevS"||t.id==="nextS"){stopRec();const i=BASE.findIndex(x=>x.a===cur)+(t.id==="nextS"?1:-1);if(BASE[i])openSheet(BASE[i].a);return}
+ if(t.id==="doneS"){stopRec();if(r.estado==="pend")r.estado="vis";touch(cur);const i=BASE.findIndex(x=>x.a===cur);const nx=BASE.slice(i+1).concat(BASE.slice(0,i)).find(x=>stateOf(x.a)==="pend"&&(!sectorSel||(x.sr||"(sin sector)")===sectorSel));toast("Guardado");if(nx)openSheet(nx.a);else closeSheet();return}
+ if(t.id==="gpsNow"){t.disabled=true;t.textContent="Buscando señal GPS…";try{const g=await getGPS();r.lat=g.lat.toFixed(6);r.lon=g.lon.toFixed(6);r.acc=String(Math.round(g.acc));$("#f_lat").value=r.lat;$("#f_lon").value=r.lon;$("#gpsInfo").textContent=`Precisión ±${Math.round(g.acc)} m`;touch(cur);refreshMap();if(g.acc>30)toast(`Precisión baja (±${Math.round(g.acc)} m). Espera unos segundos y vuelve a tomar.`,4000)}catch(err){toast(err.message,4000)}finally{t.disabled=false;t.textContent="Tomar GPS aquí"}return}
+ if(t.id==="whereAmI"){t.disabled=true;try{await getGPS();refreshMap()}catch(err){toast(err.message,4000)}finally{t.disabled=false}return}
+ if(t.id==="gpsFromPhoto"){const p=photosOf(cur).find(p=>p.lat!=null);if(!p)return toast("Ninguna foto trae coordenada");r.lat=p.lat.toFixed(6);r.lon=p.lon.toFixed(6);r.acc="";$("#f_lat").value=r.lat;$("#f_lon").value=r.lon;$("#gpsInfo").textContent="";touch(cur);refreshMap();return}
+ if(t.dataset.del){const box=t.closest(".ph");if(!box.querySelector(".confirm")){const c=document.createElement("div");c.className="confirm";c.innerHTML=`<span>¿Eliminar?</span><button class="btn" data-del2="${t.dataset.del}">Sí</button>`;box.querySelector(".meta").append(c)}return}
+ if(t.dataset.del2){const id=t.dataset.del2;const p=PH[id];if(p&&p.url)URL.revokeObjectURL(p.url);delete PH[id];await idbDel("foto",id);touch(cur);renderPhotos();refreshMap();return}});
+
+/* ---------- oficina ---------- */
+function renderOficina(){const recs=BASE.map(b=>REC[b.a]).filter(r=>r&&r.estado!=="pend");
+ const c={vis:0,con:0,sin:0,disp:0,noloc:0,excl:0,fuera:0};recs.forEach(r=>{if(r.estado==="vis")c.vis++;if(r.estado==="noloc"||r.estado==="rep")c.noloc++;if(r.cond)c[r.cond]++;if(propuesta(r).some(x=>x.startsWith("Evaluar exclusión")))c.excl++;const rel=relation(r.code,num(r.lat),num(r.lon));if(rel&&!rel.inside)c.fuera++});
+ $("#sum").innerHTML=[["vis","Verificados"],["con","Con servicio"],["sin","Sin servicio"],["disp","Disponible sin uso"],["noloc","No localizados o por reprogramar"],["excl","Propuestos para exclusión"],["fuera","Punto fuera del polígono"]].map(([k,t])=>`<div class="stat"><b>${c[k]}</b><span>${t}</span></div>`).join("");
+ const sel=$("#ofCode");const prev=sel.value;
+ sel.innerHTML=recs.length?recs.map(r=>`<option value="${esc(r.code)}">${esc(r.code)} · ${esc(COND[r.cond]||(r.estado==="noloc"?"No localizado":"Sin condición"))}</option>`).join(""):'<option value="">Aún no hay códigos verificados</option>';
+ if(recs.some(r=>r.code===prev))sel.value=prev;
+ $("#tbl").innerHTML=recs.length?recs.map(r=>`<tr data-code="${esc(r.code)}"><td><span class="mono">${esc(r.code)}</span></td><td>${esc(COND[r.cond]||(r.estado==="noloc"?"No localizado":r.estado==="rep"?"Reprogramar":"—"))}</td><td>${esc(r.cond==="sin"?(r.causa==="otra"?r.causaOtra:(CAUSAS[r.causa]||"—")):"—")}</td><td class="mono">${num(r.areaEf)!=null?fmtHa(num(r.areaEf)):"—"}</td><td class="mono">${num(r.areaEx)!=null?fmtHa(num(r.areaEx)):"—"}</td><td>${esc(relShort(relation(r.code,num(r.lat),num(r.lon)))||"—")}</td><td>${esc(propuesta(r).join("; ")||"—")}</td><td class="mono">${photosOf(r.code).length}</td></tr>`).join(""):'<tr><td colspan="8" class="muted">Los códigos aparecerán aquí a medida que los verifiques en la pestaña Campo.</td></tr>';
+ showConcept()}
+function showConcept(){const code=$("#ofCode").value;const ta=$("#concept");if(!code||!REC[code]){ta.value="";ta.disabled=true;$("#conceptNote").textContent="";return}
+ ta.disabled=false;const r=REC[code];ta.value=conceptOf(r);$("#conceptNote").textContent=r.conceptoEd?"Concepto ajustado a mano. «Volver a generar» descarta los ajustes.":"Concepto generado desde los datos de campo.";
+ document.querySelectorAll("#tbl tr").forEach(tr=>tr.classList.toggle("sel",tr.dataset.code===code))}
+$("#ofCode").addEventListener("change",showConcept);
+$("#tbl").addEventListener("click",e=>{const tr=e.target.closest("tr[data-code]");if(tr){$("#ofCode").value=tr.dataset.code;showConcept()}});
+$("#concept").addEventListener("input",e=>{const code=$("#ofCode").value;if(!code)return;const r=rec(code);r.concepto=e.target.value;r.conceptoEd=true;$("#conceptNote").textContent="Concepto ajustado a mano. «Volver a generar» descarta los ajustes.";touch(code)});
+$("#regen").addEventListener("click",()=>{const code=$("#ofCode").value;if(!code)return;const r=rec(code);r.conceptoEd=false;r.concepto="";touch(code);showConcept();toast("Concepto generado de nuevo")});
+$("#copyC").addEventListener("click",async()=>{const ta=$("#concept");try{await navigator.clipboard.writeText(ta.value);toast("Concepto copiado")}catch(e){ta.select();toast("Selecciona y copia el texto")}});
+const prof=()=>({n:$("#profN").value.trim(),p:$("#profP").value.trim()});
+$("#profN").value=lsGet("rgu.profN","");$("#profP").value=lsGet("rgu.profP","");
+$("#profN").addEventListener("input",e=>lsSet("rgu.profN",e.target.value));$("#profP").addEventListener("input",e=>lsSet("rgu.profP",e.target.value));
+
+/* ---------- exportación ---------- */
+async function deliver(filename,blob){
+ try{const file=new File([blob],filename,{type:blob.type||"application/octet-stream"});
+  if(matchMedia("(pointer:coarse)").matches&&navigator.canShare&&navigator.canShare({files:[file]})){await navigator.share({files:[file],title:filename});return true}}catch(e){if(e&&e.name==="AbortError")return false}
+ const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=filename;document.body.append(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},5000);return true}
+function photoRows(){const n={};return BASE.flatMap(b=>photosOf(b.a)).map(p=>{n[p.code]=(n[p.code]||0)+1;const lab=(p.label||"foto").normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^A-Za-z0-9]+/g,"_");return {p,name:`${p.code}_${String(n[p.code]).padStart(2,"0")}_${lab}.jpg`}})}
+const ES={pend:"Pendiente",vis:"Verificado",noloc:"No localizado",rep:"Reprogramar"};
+$("#expX").addEventListener("click",async()=>{if(!BASE.length)return toast("No hay datos cargados");const P=prof();
+ const h1=["CÓDIGO RGU ANTERIOR","CÓDIGO RGU NUEVO","TIPO DE PREDIO","TIPO DE SERVICIO PRESTADO","SERVICIO RIEGO (SI/NO)","SERVICIO DRENAJE (SI/NO)","SERVICIO PROTECCIÓN CONTRA INUNDACIONES (SI/NO)","NOMBRE DEL CANAL QUE PRESTA EL SERVICIO DE RIEGO","CANAL QUE PRESTA EL SERVICIO DEDRENAJE Y/O PROTECCIÓN","EXPLOTACIÓN PRINCIPAL","CULTIVO","CONCEPTO TÉCNICO DEL PREDIO","Nombre del Profesional  Técnico:","Profesión 3:"];
+ const s1=[h1].concat(BASE.map(b=>{const r=REC[b.a];if(!r||r.estado==="pend")return [b.a,b.b,"","","","","","","","","","","",""];
+  return [b.a,b.b,(r.T||"").toUpperCase(),servicios(r),r.V,r.W,r.X,r.Y,r.Z,r.AA,r.AB,conceptOf(r),P.n,P.p]}));
+ const h2=["Código","Código nuevo","Estado","Fecha","Acompañantes","Latitud","Longitud","Precisión GPS (m)","Punto frente al polígono","Corresponde al código","Condición del servicio","Causa sin servicio","Estructura de entrega","Estado estructura","Construida por","Medición","Medidor compartido","N.° predios medidor","Área registrada (ha)","Área polígono RGU (ha)","Área efectiva (ha)","Área a excluir (ha)","Causa área excluida","Usuario coincide","Quien explota","Condición","Recibe factura","Factura a nombre de","Dirección factura","Desenglobe","Englobe","Cambio usuario","Construcciones","Otra novedad","Observaciones","Notas de voz (transcripción)","Observación RGU","Propuesta","Fotos","Audios"];
+ const s2=[h2].concat(BASE.filter(b=>REC[b.a]&&REC[b.a].estado!=="pend").map(b=>{const r=REC[b.a];const pg=polysOf(b.a);return [b.a,b.b,ES[r.estado],r.fecha,r.acomp,num(r.lat),num(r.lon),num(r.acc),relShort(relation(b.a,num(r.lat),num(r.lon))),r.corresp,COND[r.cond]||"",r.cond==="sin"?(r.causa==="otra"?r.causaOtra:CAUSAS[r.causa]||""):"",r.estrTipo,r.estrEstado,r.estrQuien,r.medicion,r.medComp,r.medCompN,b.ab,pg.reduce((s,q)=>s+(q.area||0),0)||"",num(r.areaEf),num(r.areaEx),r.areaExCausa,r.ocupCoincide,r.ocupObs,r.ocupCond,r.factRecibe,r.factNombre,r.factDir,r.nov.des?"X":"",r.nov.eng?"X":"",r.nov.usu?"X":"",r.nov.con?"X":"",r.novTxt,r.obs,audiosOf(b.a).map(a=>a.text).filter(Boolean).join(" | "),pg.map(q=>q.obs).join(" / "),propuesta(r).join("; "),photosOf(b.a).length,audiosOf(b.a).length]}));
+ const s3=[["Archivo en el ZIP","Código","Tipo de foto","Latitud","Longitud","Origen coordenada","Fecha y hora"]].concat(photoRows().map(x=>[x.name,x.p.code,x.p.label,x.p.lat,x.p.lon,x.p.src==="foto"?"Foto":x.p.src==="gps"?"GPS":"",new Date(x.p.taken).toLocaleString("es-CO")]));
+ const wb=XLSX.utils.book_new();const w1=XLSX.utils.aoa_to_sheet(s1);w1["!cols"]=h1.map((_,i)=>({wch:i===11?80:18}));
+ const s4=[["Archivo en el ZIP","Código","Fecha y hora","Duración","Transcripción"]].concat(audioRows().map(x=>[x.name,x.a.code,new Date(x.a.created).toLocaleString("es-CO"),fmtDur(x.a.dur),x.a.text||""]));
+ XLSX.utils.book_append_sheet(wb,w1,"Columnas AOC");XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(s2),"Detalle de campo");XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(s3),"Fotos");XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(s4),"Notas de voz");
+ const out=XLSX.write(wb,{bookType:"xlsx",type:"array"});
+ if(await deliver(`AOC_RGU_${stamp()}.xlsx`,new Blob([out],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"})))toast("Excel exportado")});
+function audioRows(){const n={};return BASE.flatMap(b=>audiosOf(b.a)).map(a=>{n[a.code]=(n[a.code]||0)+1;return {a,name:`${a.code}_voz_${String(n[a.code]).padStart(2,"0")}.${extOf(a.mime)}`}})}
+$("#expZ").addEventListener("click",async()=>{const rows=photoRows(),ar=audioRows();if(!rows.length&&!ar.length)return toast("No hay fotos ni audios para exportar");toast("Preparando ZIP…");
+ const z=new JSZip();rows.forEach(({p,name})=>{if(p.blob)z.file("fotos/"+name,p.blob)});ar.forEach(({a,name})=>{if(a.blob)z.file("audios/"+name,a.blob)});
+ const blob=await z.generateAsync({type:"blob"});
+ if(await deliver(`Fotos_audios_AOC_RGU_${stamp()}.zip`,blob))toast("ZIP exportado")});
+$("#expJ").addEventListener("click",async()=>{toast("Preparando respaldo…");const z=new JSZip();
+ const meta={app:"campo-rgu",v:2,exportado:new Date().toISOString(),registros:Object.values(REC).filter(r=>r.ts),fotos:Object.values(PH).map(({blob,url,...m})=>m),audios:Object.values(AU).map(({blob,url,...m})=>m)};
+ z.file("respaldo.json",JSON.stringify(meta));Object.values(PH).forEach(p=>{if(p.blob)z.file("fotos/"+p.id+".jpg",p.blob)});Object.values(AU).forEach(a=>{if(a.blob)z.file("audios/"+a.id+"."+extOf(a.mime),a.blob)});
+ const blob=await z.generateAsync({type:"blob"});if(await deliver(`Respaldo_AOC_RGU_${stamp()}.zip`,blob))toast("Respaldo exportado")});
+$("#impJ").addEventListener("change",async e=>{const f=e.target.files[0];e.target.value="";if(!f)return;
+ try{let d,z=null;if(/\.zip$/i.test(f.name)){z=await JSZip.loadAsync(f);const j=z.file("respaldo.json");if(!j)throw 0;d=JSON.parse(await j.async("string"))}else d=JSON.parse(await f.text());
+  let n=0,m=0;for(const r of d.registros||[]){const loc=REC[r.code];if(!loc||(r.ts||0)>(loc.ts||0)){REC[r.code]=Object.assign(blank(r.code),r);await idbPut("rec",REC[r.code]);n++}}
+  for(const meta of d.fotos||[]){if(PH[meta.id])continue;let blob=null;if(z){const fz=z.file("fotos/"+meta.id+".jpg");if(fz)blob=await fz.async("blob")}if(!blob)continue;const p=Object.assign({},meta,{blob});await idbPut("foto",p);p.url=URL.createObjectURL(blob);PH[p.id]=p;m++}
+  let k=0;for(const meta of d.audios||[]){if(AU[meta.id]||!z)continue;const fz=z.file("audios/"+meta.id+"."+extOf(meta.mime));if(!fz)continue;const blob=await fz.async("blob");const a=Object.assign({},meta,{blob:new Blob([blob],{type:meta.mime||"audio/webm"}),status:meta.text?"ok":"pend"});await idbPut("audio",a);a.url=URL.createObjectURL(a.blob);AU[a.id]=a;k++}
+  renderAll();toast(`Importados ${n} códigos, ${m} fotos y ${k} notas de voz`)}catch(err){toast("El archivo no es un respaldo válido de esta app")}});
+
+/* ---------- vistas ---------- */
+function renderAll(){renderList();if(!$("#vOficina").hidden)renderOficina()}
+function showView(v){const has=BASE.length>0;if(!has)v="setup";$("#vSetup").hidden=v!=="setup";$("#vCampo").hidden=v!=="campo";$("#vOficina").hidden=v!=="oficina";$("#tabs").hidden=v==="setup";
+ $("#tabCampo").setAttribute("aria-selected",v==="campo");$("#tabOficina").setAttribute("aria-selected",v==="oficina");if(v==="oficina")renderOficina();if(v!=="setup")lsSet("rgu.tab",v)}
+$("#tabCampo").addEventListener("click",()=>showView("campo"));$("#tabOficina").addEventListener("click",()=>showView("oficina"));
+$("#filters").addEventListener("click",e=>{const b=e.target.closest("[data-f]");if(b){filtro=b.dataset.f;renderList()}});
+$("#sector").addEventListener("change",e=>{sectorSel=e.target.value;renderList()});
+$("#q").addEventListener("input",renderList);
+$("#list").addEventListener("click",e=>{const c=e.target.closest(".card");if(c)openSheet(c.dataset.code)});
+function netState(){const n=$("#net");if(navigator.onLine){n.textContent="Con señal";n.className="net on"}else{n.textContent="Sin señal";n.className="net off"}}
+addEventListener("online",netState);addEventListener("offline",netState);netState();
+
+(async()=>{idb=await openIDB();
+ if(!idb)toast("Este navegador no permite guardar datos; usa Chrome o Safari sin modo incógnito",6000);
+ try{if(navigator.storage&&navigator.storage.persist)await navigator.storage.persist()}catch(e){}
+ const base=await idbGet("kv","base"),geo=await idbGet("kv","geo"),meta=await idbGet("kv","meta");
+ for(const r of await idbAll("rec"))REC[r.code]=Object.assign(blank(r.code),r);
+ for(const p of await idbAll("foto")){if(p.blob)p.url=URL.createObjectURL(p.blob);PH[p.id]=p}
+ for(const a of await idbAll("audio")){if(a.blob)a.url=URL.createObjectURL(a.blob);if(a.status==="run"||a.status==="queue")a.status=a.text?"ok":"pend";AU[a.id]=a}
+ mdlUI();
+ if(base&&base.length)setBase(base,geo,meta);
+ showView(BASE.length?lsGet("rgu.tab","campo"):"setup")})();
+if("serviceWorker" in navigator)addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));
+</script>
+</body>
+</html>
